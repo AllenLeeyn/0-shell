@@ -142,6 +142,15 @@ pub fn command_list() -> CommandList {
         ),
     );
 
+    cmds.register(
+        "mv".to_string(),
+        Command::new(
+            "mv - move (rename) files", 
+            true, 
+            mv_callback
+        ),
+    );
+
     cmds
 }
 
@@ -320,6 +329,44 @@ fn cp_callback(args: Vec<String>) -> Result<String, String> {
         // Perform the copy
         fs::copy(src_path, final_dest)
             .map_err(|e| format!("cp: {}: {}", source_str, e))?;
+    }
+
+    Ok(String::new())
+}
+
+fn mv_callback(args: Vec<String>) -> Result<String, String> {
+    // We need at least a source and a destination
+    if args.len() < 2 {
+        return Err("mv: missing destination file operand after source".to_string());
+    }
+
+    // Split args into sources and the final destination
+    let (sources, destination) = args.split_at(args.len() - 1);
+    let dest_path = Path::new(&destination[0]);
+
+    // Check if we are moving multiple things into a directory
+    let is_dest_dir = dest_path.is_dir();
+
+    if sources.len() > 1 && !is_dest_dir {
+        return Err(format!("mv: target '{}' is not a directory", destination[0]));
+    }
+
+    for source_str in sources {
+        let src_path = Path::new(source_str);
+        
+        // Determine the actual destination path
+        let final_dest = if is_dest_dir {
+            let file_name = src_path.file_name()
+                .ok_or_else(|| format!("mv: invalid source '{}'", source_str))?;
+            dest_path.join(file_name)
+        } else {
+            dest_path.to_path_buf()
+        };
+
+        // fs::rename handles files and folders across the same partition
+        fs::rename(src_path, final_dest).map_err(|e| {
+            format!("mv: cannot move '{}' to '{}': {}", source_str, destination[0], e)
+        })?;
     }
 
     Ok(String::new())
