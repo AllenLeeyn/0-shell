@@ -14,7 +14,7 @@ pub fn parse_line(input: &str) -> Vec<CommandCall> {
             }
 
             // The first token is the command name
-            let name = tokens.remove(0);
+            let name = tokens.remove(0).to_lowercase();
             // The rest are the arguments
             let args = tokens;
 
@@ -72,14 +72,13 @@ pub fn tokenize(input: &str) -> Vec<String> {
 fn handle_escape(c: char, in_double_quote: bool) -> String {
     if in_double_quote {
         match c {
-            'n' => "\n".to_string(),
-            't' => "\t".to_string(),
+            // Only these characters lose their special meaning in "" via \
             '"' | '\\' | '$' => c.to_string(),
-            // POSIX rule: if not a special char in "", keep backslash
+            // For everything else (like \n), Bash keeps the backslash literal
             _ => format!("\\{}", c),
         }
     } else {
-        // Naked context: backslash always escapes the next char literally
+        // Outside of quotes, \ makes the next char literal (e.g., \space)
         c.to_string()
     }
 }

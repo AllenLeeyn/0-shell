@@ -1,6 +1,7 @@
 mod command;
 mod command_call;
 
+use std::env;
 use command::{
     command_list
 };
@@ -13,11 +14,6 @@ use std::io::{
     Read, Write, stdin, stdout, stderr, Result
 };
 
-// split commands.
-// tokenizer
-// - no quote, single quote, double quote
-// parser
-
 fn main() -> Result<()> {
     let mut stdin = stdin();
     let mut stdout = stdout();
@@ -26,7 +22,8 @@ fn main() -> Result<()> {
     let cmds = command_list();
 
     loop {
-        stdout.write_all(b"$ ")?;
+        let prompt = get_prompt(); 
+        stdout.write_all(prompt.as_bytes())?;
         stdout.flush()?;
 
         let n = stdin.read(&mut buffer)?;
@@ -54,4 +51,17 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn get_prompt() -> String {
+    let cwd = env::current_dir().unwrap_or_default();
+    let home = env::var("HOME").unwrap_or_default();
+    
+    let path_str = cwd.to_string_lossy();
+    
+    if !home.is_empty() && path_str.starts_with(&home) {
+        format!("~{} $ ", &path_str[home.len()..])
+    } else {
+        format!("{} $ ", path_str)
+    }
 }

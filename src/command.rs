@@ -97,10 +97,106 @@ pub fn command_list() -> CommandList {
         ),
     );
 
+    cmds.register(
+        "pwd".to_string(),
+        Command::new(
+            "pwd - print name of current/working directory",
+            false,
+            pwd_callback
+        ),
+    );
+
+    cmds.register(
+        "cd".to_string(),
+        Command::new(
+            "cd — change the working directory",
+            true,
+            cd_callback
+        ),
+    );
+
     cmds
 }
 
 fn echo_callback(args: Vec<String>) -> Result<String, String> {
-    // Arguments are already unescaped by the tokenizer!
-    Ok(format!("{}\n", args.join(" ")))
+    let mut interpret = false;
+    let mut start_idx = 0;
+
+    // Check for the -e flag
+    if let Some(first_arg) = args.get(0) {
+        if first_arg == "-e" {
+            interpret = true;
+            start_idx = 1;
+        }
+    }
+
+    let input = args[start_idx..].join(" ");
+    
+    if !interpret {
+        // Default Bash behavior: print literally
+        return Ok(format!("{}\n", input));
+    }
+
+    // -e behavior: interpret backslash sequences
+    let mut output = String::new();
+    let mut chars = input.chars().peekable();
+    
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('\\') => output.push('\\'),
+                Some('a')  => output.push('\x07'), // BEL
+                Some('b')  => output.push('\x08'), // Backspace
+                Some('c')  => return Ok(output),   // Produce no further output
+                Some('e')  => output.push('\x1b'), // Escape
+                Some('f')  => output.push('\x0c'), // Form feed
+                Some('n')  => output.push('\n'),
+                Some('r')  => output.push('\r'),
+                Some('t')  => output.push('\t'),
+                Some('v')  => output.push('\x0b'), // Vertical tab
+                Some(next) => {
+                    output.push('\\');
+                    output.push(next);
+                }
+                None => output.push('\\'),
+            }
+        } else {
+            output.push(c);
+        }
+    }
+
+    Ok(format!("{}\n", output))
+}
+
+use std::env;
+
+fn pwd_callback(_args: Vec<String>) -> Result<String, String> {
+    // env::current_dir() returns a Result<PathBuf, Error>
+    match env::current_dir() {
+        Ok(path) => {
+            // Convert PathBuf to String. 
+            // .display() handles the formatting for different OS platforms.
+            Ok(format!("{}\n", path.display()))
+        }
+        Err(e) => Err(format!("pwd: error retrieving current directory: {}", e)),
+    }
+}
+
+use std::path::Path;
+
+fn cd_callback(args: Vec<String>) -> Result<String, String> {
+    // 1. Determine the destination
+    let destination = if args.is_empty() {
+        // In Unix, 'cd' with no args goes to $HOME
+        env::var("HOME").unwrap_or_else(|_| "/".to_string())
+    } else {
+        args[0].clone()
+    };
+
+    // 2. Attempt to change the directory
+    let new_path = Path::new(&destination);
+    match env::set_current_dir(new_path) {
+        Ok(_) => Ok(String::new()), // Success: cd usually prints nothing
+        Err(e) => Err(format!("cd: {}: {}", destination, e)),
+    }
 }
