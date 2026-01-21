@@ -124,6 +124,24 @@ pub fn command_list() -> CommandList {
         ),
     );
 
+    cmds.register(
+        "cat".to_string(),
+        Command::new(
+            "cat - concatenate files and print on the standard output", 
+            false, 
+            cat_callback
+        ),
+    );
+
+    cmds.register(
+        "cp".to_string(),
+        Command::new(
+            "cp - copy files and directories", 
+            true, 
+            cp_callback
+        ),
+    );
+
     cmds
 }
 
@@ -228,5 +246,81 @@ fn mkdir_callback(args: Vec<String>) -> Result<String, String> {
             return Err(format!("mkdir: cannot create directory '{}': {}", path, e));
         }
     }
+    Ok(String::new())
+}
+
+use std::io::{self, BufRead, BufReader, Write};
+use std::fs::File;
+
+fn cat_callback(args: Vec<String>) -> Result<String, String> {
+    let mut stdout = io::stdout();
+
+    if args.is_empty() {
+        // --- Interactive Mode ---
+        let stdin = io::stdin();
+        let handle = stdin.lock();
+        
+        // Use a loop to echo line-by-line immediately
+        let mut line = String::new();
+        let mut reader = io::BufReader::new(handle);
+        
+        while reader.read_line(&mut line).map_err(|e| e.to_string())? > 0 {
+            stdout.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+            stdout.flush().map_err(|e| e.to_string())?;
+            line.clear();
+        }
+    } else {
+        // --- File Mode ---
+        for file_path in args {
+            let file = File::open(&file_path)
+                .map_err(|e| format!("cat: {}: {}", file_path, e))?;
+            let mut reader = BufReader::new(file);
+
+            // io::copy streams directly from disk to screen
+            io::copy(&mut reader, &mut stdout)
+                .map_err(|e| format!("cat: {}: {}", file_path, e))?;
+        }
+    }
+
+    // Return empty string because we've already written to stdout
+    Ok(String::new())
+}
+
+use std::fs;
+
+fn cp_callback(args: Vec<String>) -> Result<String, String> {
+    // CommandList::execute handles "missing operand" check, 
+    // but cp specifically needs at least TWO: source and dest.
+    if args.len() < 2 {
+        return Err("cp: missing destination file operand after source".to_string());
+    }
+
+    let (sources, destination) = args.split_at(args.len() - 1);
+    let dest_path = Path::new(&destination[0]);
+
+    // Check if the destination is an existing directory
+    let is_dest_dir = dest_path.is_dir();
+
+    if sources.len() > 1 && !is_dest_dir {
+        return Err(format!("cp: target '{}' is not a directory", destination[0]));
+    }
+
+    for source_str in sources {
+        let src_path = Path::new(source_str);
+        
+        // Construct the actual final path
+        let final_dest = if is_dest_dir {
+            let file_name = src_path.file_name()
+                .ok_or_else(|| format!("cp: invalid source name '{}'", source_str))?;
+            dest_path.join(file_name)
+        } else {
+            dest_path.to_path_buf()
+        };
+
+        // Perform the copy
+        fs::copy(src_path, final_dest)
+            .map_err(|e| format!("cp: {}: {}", source_str, e))?;
+    }
+
     Ok(String::new())
 }
