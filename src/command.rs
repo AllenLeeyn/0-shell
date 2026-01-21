@@ -51,7 +51,7 @@ impl CommandList {
 
         // 2. Command Lookup
         let cmd = self.cmds.get(&cmd_name)
-            .ok_or_else(|| format!("Command '{}' not found", cmd_name))?;
+            .ok_or_else(|| format!("0-shell: {}: command not found", cmd_name))?;
 
         // 3. Specific '--help' flag check
         if args.iter().any(|arg| arg == "--help" || arg == "-h") {
@@ -110,7 +110,7 @@ pub fn command_list() -> CommandList {
         "cd".to_string(),
         Command::new(
             "cd — change the working directory",
-            true,
+            false,
             cd_callback
         ),
     );
