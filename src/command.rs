@@ -160,6 +160,14 @@ pub fn command_list() -> CommandList {
         ),
     );
 
+    cmds.register(
+        "ls".to_string(),
+        Command::new(
+            "ls - list directory contents",
+            false,
+            ls_callback)
+    );
+
     cmds
 }
 
@@ -426,4 +434,89 @@ fn rm_callback(args: Vec<String>) -> Result<String, String> {
     } else {
         Ok(String::new())
     }
+}
+
+use std::os::unix::fs::PermissionsExt;  
+use chrono::{DateTime, Local};
+
+fn ls_callback(args: Vec<String>) -> Result<String, String> {
+    let mut all = false;
+    let mut long = false;
+    let mut classify = false;
+    let mut paths = Vec::new();
+
+    // 1. Manual Flag Parsing
+    for arg in args {
+        if arg.starts_with('-') && arg.len() > 1 {
+            for c in arg.chars().skip(1) {
+                match c {
+                    'a' => all = true,
+                    'l' => long = true,
+                    'F' => classify = true,
+                    _ => return Err(format!("ls: invalid option -- '{}'", c)),
+                }
+            }
+        } else {
+            paths.push(arg);
+        }
+    }
+
+    if paths.is_empty() { paths.push(".".to_string()); }
+
+    let mut final_output = String::new();
+
+    for path_str in paths {
+        let entries = fs::read_dir(&path_str)
+            .map_err(|e| format!("ls: cannot access '{}': {}", path_str, e))?;
+
+        let mut entry_list = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+
+            // Handle -a
+            if !all && name.starts_with('.') { continue; }
+            entry_list.push(entry);
+        }
+
+        // Sort alphabetically
+        entry_list.sort_by_key(|e| e.file_name());
+
+        for entry in entry_list {
+            let metadata = entry.metadata().map_err(|e| e.to_string())?;
+            let mut name = entry.file_name().to_string_lossy().into_owned();
+
+            // Handle -F (Classify)
+            if classify {
+                if metadata.is_dir() { name.push('/'); }
+                else if metadata.permissions().mode() & 0o111 != 0 { name.push('*'); }
+            }
+
+            if long {
+                // Handle -l (Long format)
+                let mode = parse_permissions(metadata.permissions().mode());
+                let size = metadata.len();
+                let modified: DateTime<Local> = metadata.modified().unwrap().into();
+                let time_str = modified.format("%b %d %H:%M").to_string();
+                
+                final_output.push_str(&format!("{} {:>8} {} {}\n", mode, size, time_str, name));
+            } else {
+                final_output.push_str(&format!("{}  ", name));
+            }
+        }
+        final_output.push('\n');
+    }
+
+    Ok(final_output)
+}
+
+// Helper for -l permissions string
+fn parse_permissions(mode: u32) -> String {
+    let mut s = String::with_capacity(10);
+    s.push(if mode & 0o40000 != 0 { 'd' } else { '-' }); // Basic dir check
+    let rwx = ["---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"];
+    s.push_str(rwx[((mode >> 6) & 7) as usize]);
+    s.push_str(rwx[((mode >> 3) & 7) as usize]);
+    s.push_str(rwx[(mode & 7) as usize]);
+    s
 }
