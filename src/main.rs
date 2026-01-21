@@ -1,51 +1,53 @@
 mod command;
 mod command_call;
 
+use command::command_list;
+use command_call::parse_line;
 use std::env;
-use command::{
-    command_list
-};
+use std::io::{self, Write};
 
-use command_call::{
-    parse_line
-};
-
-use std::io::{
-    Read, Write, stdin, stdout, stderr, Result
-};
-
-fn main() -> Result<()> {
-    let mut stdin = stdin();
-    let mut stdout = stdout();
-    let mut stderr = stderr();
-    let mut buffer = [0; 1024];
+/// Main entry point for the 0-shell
+/// Implements a read-eval-print loop (REPL) for command execution
+fn main() -> io::Result<()> {
+    let mut stdout = io::stdout();
+    let mut stderr = io::stderr();
     let cmds = command_list();
 
     loop {
-        let prompt = get_prompt(); 
+        let prompt = get_prompt();
         stdout.write_all(prompt.as_bytes())?;
         stdout.flush()?;
 
-        let n = stdin.read(&mut buffer)?;
-        if n == 0 { break; }
+        let mut line = String::new();
+        // Lock stdin only long enough to read the command line
+        let bytes_read = io::stdin().read_line(&mut line)?;
 
-        let raw_input = String::from_utf8_lossy(&buffer[..n]);
+        if bytes_read == 0 {
+            break; // EOF (Ctrl+D)
+        }
 
-        // Layer 1: Parse the line into individual calls
-        let calls = parse_line(&raw_input);
+        // Remove trailing newline
+        let raw_input = line.trim_end();
+
+        // Layer 1: Parse the line into individual calls (with flags separated)
+        let calls = parse_line(raw_input);
 
         // Layer 2: Dispatch calls one by one
         for call in calls {
-            match cmds.execute(call.name, call.args) {
-                Ok(output) => {
-                    if output == "EXIT_SHELL" { return Ok(()); }
-                    stdout.write_all(output.as_bytes())?;
-                    stdout.flush()?;
-                }
-                Err(e) => {
-                    stderr.write_all(format!("{}\n", e).as_bytes())?;
-                    stderr.flush()?;
-                }
+            let result = cmds.execute(call.name, call.flags, call.args);
+
+            if result.should_exit {
+                return Ok(());
+            }
+
+            if !result.stdout.is_empty() {
+                stdout.write_all(result.stdout.as_bytes())?;
+                stdout.flush()?;
+            }
+
+            if !result.stderr.is_empty() {
+                stderr.write_all(format!("{}\n", result.stderr).as_bytes())?;
+                stderr.flush()?;
             }
         }
     }
@@ -53,12 +55,14 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Generates the shell prompt, showing the current directory
+/// Replaces the home directory path with ~ for brevity
 fn get_prompt() -> String {
     let cwd = env::current_dir().unwrap_or_default();
     let home = env::var("HOME").unwrap_or_default();
-    
+
     let path_str = cwd.to_string_lossy();
-    
+
     if !home.is_empty() && path_str.starts_with(&home) {
         format!("~{} $ ", &path_str[home.len()..])
     } else {
