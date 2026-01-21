@@ -72,7 +72,6 @@ impl CommandList {
     }
 }
 
-
 pub fn command_list() -> CommandList {
     let mut cmds = CommandList::new();
 
@@ -112,6 +111,16 @@ pub fn command_list() -> CommandList {
             "cd — change the working directory",
             false,
             cd_callback
+        ),
+    );
+
+    // mkdir REQUIRES an argument
+    cmds.register(
+        "mkdir".to_string(),
+        Command::new(
+            "mkdir DIRECTORY... - Create directories recursively.", 
+            true, 
+            mkdir_callback
         ),
     );
 
@@ -209,4 +218,15 @@ fn cd_callback(args: Vec<String>) -> Result<String, String> {
         Ok(_) => Ok(String::new()), // Success: cd usually prints nothing
         Err(e) => Err(format!("cd: {}: {}", destination, e)),
     }
+}
+
+fn mkdir_callback(args: Vec<String>) -> Result<String, String> {
+    for path in args {
+        // create_dir_all handles nested paths and doesn't 
+        // error if the directory already exists.
+        if let Err(e) = std::fs::create_dir_all(&path) {
+            return Err(format!("mkdir: cannot create directory '{}': {}", path, e));
+        }
+    }
+    Ok(String::new())
 }
