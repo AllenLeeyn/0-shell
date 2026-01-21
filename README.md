@@ -19,9 +19,9 @@ Must implement following commands **from scratch**, using system-level Rust abst
 - [ ]`ls` (supporting `-l`, `-a`, `-F`)
 - [o]`pwd`
 - [o]`cat`
-- [ ]`cp`
-- [ ]`rm` (supporting `-r`)
-- [ ]`mv`
+- [o]`cp`
+- [o]`rm` (supporting `-r`)
+- [o]`mv`
 - [o]`mkdir`
 - [o]`exit`
 

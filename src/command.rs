@@ -151,6 +151,15 @@ pub fn command_list() -> CommandList {
         ),
     );
 
+    cmds.register(
+        "rm".to_string(),
+        Command::new(
+            "rm - remove files or directories", 
+            true, 
+            rm_callback
+        ),
+    );
+
     cmds
 }
 
@@ -370,4 +379,51 @@ fn mv_callback(args: Vec<String>) -> Result<String, String> {
     }
 
     Ok(String::new())
+}
+
+fn rm_callback(args: Vec<String>) -> Result<String, String> {
+    let mut recursive = false;
+    let mut paths = Vec::new();
+    let mut exit_error = false;
+    let mut error_message = String::new();
+
+    // 1. Separate flags from paths
+    for arg in args {
+        if arg == "-r" || arg == "-R" {
+            recursive = true;
+        } else {
+            paths.push(arg);
+        }
+    }
+
+    // 2. Process each path
+    for path_str in paths {
+        let path = Path::new(&path_str);
+        
+        // Define a small helper to capture errors without stopping the loop
+        let result = if !path.exists() {
+            Err(format!("rm: cannot remove '{}': No such file or directory", path_str))
+        } else if path.is_dir() {
+            if recursive {
+                fs::remove_dir_all(path).map_err(|e| format!("rm: {}: {}", path_str, e))
+            } else {
+                Err(format!("rm: cannot remove '{}': Is a directory", path_str))
+            }
+        } else {
+            fs::remove_file(path).map_err(|e| format!("rm: {}: {}", path_str, e))
+        };
+
+        // If an error happened, store it and mark the command as failed, but CONTINUE
+        if let Err(e) = result {
+            if !error_message.is_empty() { error_message.push('\n'); }
+            error_message.push_str(&e);
+            exit_error = true;
+        }
+    }
+
+    if exit_error {
+        Err(error_message)
+    } else {
+        Ok(String::new())
+    }
 }
