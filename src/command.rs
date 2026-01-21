@@ -144,21 +144,17 @@ fn echo_callback(args: Vec<String>) -> Result<String, String> {
     while let Some(c) = chars.next() {
         if c == '\\' {
             match chars.next() {
-                Some('\\') => output.push('\\'),
-                Some('a')  => output.push('\x07'), // BEL
-                Some('b')  => output.push('\x08'), // Backspace
-                Some('c')  => return Ok(output),   // Produce no further output
-                Some('e')  => output.push('\x1b'), // Escape
-                Some('f')  => output.push('\x0c'), // Form feed
-                Some('n')  => output.push('\n'),
-                Some('r')  => output.push('\r'),
-                Some('t')  => output.push('\t'),
-                Some('v')  => output.push('\x0b'), // Vertical tab
+                Some('c') => return Ok(output), // "Stop" signal: return immediately without \n
                 Some(next) => {
-                    output.push('\\');
-                    output.push(next);
+                    if let Some(mapped) = map_echo_escape(next) {
+                        output.push(mapped);
+                    } else {
+                        // Not a recognized escape; push both literally
+                        output.push('\\');
+                        output.push(next);
+                    }
                 }
-                None => output.push('\\'),
+                None => output.push('\\'), // Trailing backslash
             }
         } else {
             output.push(c);
@@ -168,6 +164,20 @@ fn echo_callback(args: Vec<String>) -> Result<String, String> {
     Ok(format!("{}\n", output))
 }
 
+fn map_echo_escape(c: char) -> Option<char> {
+    match c {
+        'a' => Some('\x07'), // BEL
+        'b' => Some('\x08'), // Backspace
+        'e' => Some('\x1b'), // Escape
+        'f' => Some('\x0c'), // Form feed
+        'n' => Some('\n'),
+        'r' => Some('\r'),
+        't' => Some('\t'),
+        'v' => Some('\x0b'), // Vertical tab
+        '\\' => Some('\\'),
+        _ => None,
+    }
+}
 use std::env;
 
 fn pwd_callback(_args: Vec<String>) -> Result<String, String> {
