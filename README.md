@@ -542,3 +542,9 @@ Tests cover:
 ## License
 
 This project is part of an educational exercise to build a minimal shell from scratch.
+```
+
+#### Tasklist
+- [ ] add handling of ! (Sergei)
+- [ ] add proper formatting for ls (Gigi)
+- [ ] add ls -laF to list similar to bash (Allen)
