@@ -335,18 +335,40 @@ $ pwd
 
 **Options:**
 - `-a`: List all entries, including hidden files (starting with `.`)
-- `-l`: Use long listing format (permissions, size, date, name)
+- `-l`: Use long listing format (see **`ls -l` output format** below)
 - `-F`: Append indicator characters (`/` for directories, `*` for executables)
 
 **Description:** Lists directory contents. If no path is specified, lists the current directory.
 
-**Implementation:** Located in `src/command.rs` at `ls_callback()` (line 555). Uses `fs::read_dir()` to read directory entries. Supports multiple paths, showing each path's header when multiple are specified.
+**Implementation:** Located in `src/command.rs` at `ls_callback()`. Uses `fs::read_dir()` to read directory entries. Supports multiple paths, showing each path's header when multiple are specified.
 
-**Long format details:**
-- Permissions: Unix-style (e.g., `drwxr-xr-x`)
-- Size: File size in bytes
-- Date: Modification time in `MMM DD HH:MM` format
-- Name: File/directory name with type indicators when `-F` is used
+#### `ls -l` output format
+
+The `-l` option produces a long listing with one line per file/directory. The layout is:
+
+1. **First line:** `total N`  
+   - `N` = total number of 1024-byte blocks used by the listed entries (disk usage).
+
+2. **Per-entry lines** (one line per file or directory), in order:
+   - **File permissions** — 10 characters: type (`d` = directory, `-` = file) + 9 permission bits (e.g. `rwxr-xr-x`).
+   - **Number of links** — Hard link count (integer).
+   - **Owner name** — User that owns the file (Unix); on Windows may be `-` if unavailable.
+   - **Owner group** — Group that owns the file (Unix); on Windows may be `-` or a numeric id if unavailable.
+   - **File size** — Size in bytes (right-aligned).
+   - **Time of last modification** — `Mon DD HH:MM` (e.g. `Jan 18 20:26`, `Feb  4 22:19`).
+   - **File or directory name** — Basename; with `-F`, directories get `/` and executables get `*`.
+
+**Example (real `ls -l` output):**
+```text
+$ ls -l
+total 37
+-rw-r--r-- 1 leeyn 197609  3641 Jan 18 20:26 0-shell.md
+-rw-r--r-- 1 leeyn 197609  7437 Feb  4 22:19 Cargo.lock
+-rw-r--r-- 1 leeyn 197609    99 Feb  4 22:19 Cargo.toml
+-rw-r--r-- 1 leeyn 197609 17108 Feb  4 22:00 README.md
+drwxr-xr-x 1 leeyn 197609     0 Feb  4 22:00 src/
+drwxr-xr-x 1 leeyn 197609     0 Jan 21 01:23 target/
+```
 
 **Examples:**
 ```bash
@@ -357,14 +379,16 @@ $ ls -a
 .  ..  .hidden  file1.txt  file2.txt
 
 $ ls -l
--rw-r--r--     1024 Dec 15 14:30 file1.txt
-drwxr-xr-x     4096 Dec 15 14:31 directory1
+total 6
+-rw-r--r-- 1 user group  1024 Dec 15 14:30 file1.txt
+drwxr-xr-x 1 user group  4096 Dec 15 14:31 directory1
 
 $ ls -laF
-drwxr-xr-x     4096 Dec 15 14:31 ./
-drwxr-xr-x     4096 Dec 15 14:30 ../
--rw-r--r--     1024 Dec 15 14:30 file1.txt
-drwxr-xr-x     4096 Dec 15 14:31 directory1/
+total 8
+drwxr-xr-x 1 user group  4096 Dec 15 14:31 ./
+drwxr-xr-x 1 user group  4096 Dec 15 14:30 ../
+-rw-r--r-- 1 user group  1024 Dec 15 14:30 file1.txt
+drwxr-xr-x 1 user group  4096 Dec 15 14:31 directory1/
 ```
 
 ---

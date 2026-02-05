@@ -6,8 +6,6 @@ use std::path::Path;
 
 use chrono::{DateTime, Local};
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 
 /// The result of a command execution, containing output and error streams.
 pub struct CommandResult {
@@ -574,50 +572,30 @@ fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
 
         match fs::read_dir(path_str) {
             Ok(entries) => {
-                let mut entry_list = Vec::new();
+                let mut rows: Vec<(String, std::fs::Metadata)> = Vec::new();
+
+                if all {
+                    let dir_path = Path::new(path_str);
+                    if let Ok(meta) = dir_path.metadata() {
+                        rows.push((".".to_string(), meta));
+                    }
+                    let parent_path = dir_path.join("..");
+                    if parent_path != dir_path {
+                        if let Ok(meta) = parent_path.metadata() {
+                            rows.push(("..".to_string(), meta));
+                        }
+                    }
+                }
+
                 for entry in entries {
                     match entry {
                         Ok(e) => {
                             let name = e.file_name().to_string_lossy().into_owned();
                             if all || !name.starts_with('.') {
-                                entry_list.push(e);
-                            }
-                        }
-                        Err(e) => {
-                            if !result.stderr.is_empty() {
-                                result.stderr.push('\n');
-                            }
-                            result.stderr.push_str(&format!("ls: {}", e));
-                        }
-                    }
-                }
-
-                entry_list.sort_by_key(|e| e.file_name());
-
-                for entry in entry_list {
-                    match entry.metadata() {
-                        Ok(metadata) => {
-                            let mut name = entry.file_name().to_string_lossy().into_owned();
-                            if classify {
-                                if metadata.is_dir() {
-                                    name.push('/');
-                                } else if is_executable(&metadata) {
-                                    name.push('*');
+                                if let Ok(meta) = e.path().metadata() {
+                                    rows.push((name, meta));
                                 }
                             }
-
-                            if long {
-                                let mode = parse_permissions(&metadata);
-                                let size = metadata.len();
-                                let modified: DateTime<Local> = metadata.modified().unwrap().into();
-                                let time_str = modified.format("%b %d %H:%M").to_string();
-                                result.stdout.push_str(&format!(
-                                    "{} {:>8} {} {}\n",
-                                    mode, size, time_str, name
-                                ));
-                            } else {
-                                result.stdout.push_str(&format!("{}  ", name));
-                            }
                         }
                         Err(e) => {
                             if !result.stderr.is_empty() {
@@ -627,7 +605,55 @@ fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
                         }
                     }
                 }
-                if !long {
+
+                rows.sort_by(|a, b| a.0.cmp(&b.0));
+
+                if long {
+                    let total_blocks: u64 = rows.iter().map(|(_, m)| metadata_blocks_1k(m)).sum();
+                    result
+                        .stdout
+                        .push_str(&format!("total {}\n", total_blocks));
+                    for (mut name, metadata) in rows {
+                        if classify {
+                            let ft = metadata.file_type();
+                            if ft.is_dir() {
+                                name.push('/');
+                            } else if ft.is_symlink() {
+                                name.push('@');
+                            } else if is_executable(&metadata) {
+                                name.push('*');
+                            }
+                        }
+                        let mode = parse_permissions(&metadata);
+                        let nlink = metadata_nlink(&metadata);
+                        let owner = metadata_owner(&metadata);
+                        let group = metadata_group(&metadata);
+                        let size = if metadata.file_type().is_dir() {
+                            0
+                        } else {
+                            metadata.len()
+                        };
+                        let modified: DateTime<Local> = metadata.modified().unwrap().into();
+                        let time_str = modified.format("%b %e %H:%M").to_string();
+                        result.stdout.push_str(&format!(
+                            "{} {:>2} {} {} {:>8} {} {}\n",
+                            mode, nlink, owner, group, size, time_str, name
+                        ));
+                    }
+                } else {
+                    for (mut name, metadata) in rows {
+                        if classify {
+                            let ft = metadata.file_type();
+                            if ft.is_dir() {
+                                name.push('/');
+                            } else if ft.is_symlink() {
+                                name.push('@');
+                            } else if is_executable(&metadata) {
+                                name.push('*');
+                            }
+                        }
+                        result.stdout.push_str(&format!("{}  ", name));
+                    }
                     result.stdout.push('\n');
                 }
             }
@@ -643,6 +669,58 @@ fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
     }
 
     result
+}
+
+/// Returns the number of hard links (Unix). On Windows, returns 1.
+fn metadata_nlink(metadata: &std::fs::Metadata) -> u64 {
+    #[cfg(unix)]
+    {
+        metadata.nlink()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        1
+    }
+}
+
+/// Returns total disk blocks (1024-byte units) for "total" line in ls -l.
+/// On Unix uses st_blocks (512-byte units), so we divide by 2.
+fn metadata_blocks_1k(metadata: &std::fs::Metadata) -> u64 {
+    #[cfg(unix)]
+    {
+        metadata.blocks() / 2
+    }
+    #[cfg(not(unix))]
+    {
+        (metadata.len() + 1023) / 1024
+    }
+}
+
+/// Returns owner display string (uid on Unix, "-" on Windows).
+fn metadata_owner(metadata: &std::fs::Metadata) -> String {
+    #[cfg(unix)]
+    {
+        metadata.uid().to_string()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        "-".to_string()
+    }
+}
+
+/// Returns group display string (gid on Unix, "-" on Windows).
+fn metadata_group(metadata: &std::fs::Metadata) -> String {
+    #[cfg(unix)]
+    {
+        metadata.gid().to_string()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        "-".to_string()
+    }
 }
 
 /// Checks if a file is executable.
@@ -661,13 +739,21 @@ fn is_executable(metadata: &std::fs::Metadata) -> bool {
 }
 
 /// Generates a human-readable permissions string (e.g., `drwxr-xr-x`).
+/// Uses `metadata.file_type()` for the type character (cross-platform).
 fn parse_permissions(metadata: &std::fs::Metadata) -> String {
     let mut s = String::with_capacity(10);
+    let ft = metadata.file_type();
 
     #[cfg(unix)]
     {
         let mode = metadata.permissions().mode();
-        s.push(if mode & 0o40000 != 0 { 'd' } else { '-' });
+        s.push(if ft.is_dir() {
+            'd'
+        } else if ft.is_symlink() {
+            'l'
+        } else {
+            '-'
+        });
         let rwx = ["---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"];
         s.push_str(rwx[((mode >> 6) & 7) as usize]);
         s.push_str(rwx[((mode >> 3) & 7) as usize]);
@@ -676,7 +762,13 @@ fn parse_permissions(metadata: &std::fs::Metadata) -> String {
 
     #[cfg(not(unix))]
     {
-        s.push(if metadata.is_dir() { 'd' } else { '-' });
+        s.push(if ft.is_dir() {
+            'd'
+        } else if ft.is_symlink() {
+            'l'
+        } else {
+            '-'
+        });
         s.push_str("rw-rw-rw-");
     }
 
