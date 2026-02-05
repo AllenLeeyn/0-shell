@@ -6,6 +6,7 @@ A standalone Unix shell implementation written in Rust for embedded Linux enviro
 
 - **Read-Evaluate-Print Loop (REPL)**: Interactive command-line interface
 - **Built-in Commands**: All commands implemented from scratch using Rust standard library
+- **Command History**: Navigate through previously executed commands using arrow keys (↑/↓)
 - **Quote Handling**: Supports single quotes, double quotes, and escape sequences
 - **Command Chaining**: Execute multiple commands with semicolons (`;`)
 - **Error Handling**: Robust error messages and graceful failure handling
@@ -46,9 +47,9 @@ cargo build --release
 
 The project is organized into three main modules:
 
-- **`main.rs`**: Contains the REPL loop and prompt generation
-- **`command.rs`**: Implements all built-in commands and command registry
-- **`command_call.rs`**: Handles command parsing, tokenization, and quote processing
+- `**main.rs**`: Contains the REPL loop and prompt generation
+- `**command.rs**`: Implements all built-in commands and command registry
+- `**command_call.rs**`: Handles command parsing, tokenization, and quote processing
 
 ## Read-Evaluate-Print Loop (REPL)
 
@@ -114,67 +115,73 @@ loop {
 #### 1. Prompt Generation (`get_prompt()`)
 
 Located at lines 58-71 in `src/main.rs`, the prompt function:
+
 - Retrieves the current working directory using `env::current_dir()`
 - Replaces the home directory path with `~` for brevity
-- Formats the prompt as `{path} $ ` or `~{relative_path} $ `
+- Formats the prompt as `{path} $`  or `~{relative_path} $`
 
 **Example outputs:**
-- `/home/user/projects $ `
-- `~/projects $ ` (when in a subdirectory of HOME)
 
-#### 2. Input Reading: Line-Based vs Buffer-Based
+- `/home/user/projects $` 
+- `~/projects $`  (when in a subdirectory of HOME)
 
-The shell uses **line-based input handling** via `io::stdin().read_line()` (line 23 in `src/main.rs`). This design choice prioritizes immediate feedback and user experience.
+#### 2. Input Reading: History-Enabled Line Editor
 
-**Line-Based Input (Current Implementation)**
+The shell uses **rustyline** for input handling, providing advanced line editing capabilities and command history navigation. The implementation is located in `src/main.rs` in the `read_line_with_history()` function.
 
-```rust
-let mut line = String::new();
-let bytes_read = io::stdin().read_line(&mut line)?;
-```
-
-**Characteristics:**
-- **Reads until newline**: Blocks until the user presses Enter (`\n`)
-- **Immediate processing**: Each line is processed as soon as Enter is pressed
-- **Simple and predictable**: User sees immediate feedback after each command
-- **Natural interaction**: Matches how users expect shells to work (command → Enter → result)
-- **EOF handling**: Returns 0 bytes when Ctrl+D is pressed, allowing graceful exit
-
-**Alternative: Buffer-Based Input**
-
-A buffer-based approach would read raw bytes in chunks without waiting for newlines:
+**History-Enabled Input (Current Implementation)**
 
 ```rust
-// Hypothetical buffer-based approach
-let mut buffer = [0u8; 1024];
-let bytes_read = io::stdin().read(&mut buffer)?;
-// Process bytes as they arrive, need to manually detect newlines
+let mut rl = DefaultEditor::new()?;
+let line = rl.readline(prompt)?;
 ```
 
-**Trade-offs of Buffer-Based:**
-- **Pros**: 
-  - More control over input processing
-  - Could support character-by-character processing (e.g., for advanced line editing)
-  - Better for handling binary data or non-line-oriented input
-- **Cons**:
-  - More complex implementation (must manually detect line boundaries)
-  - Requires buffering logic to reconstruct complete commands
-  - Less intuitive for interactive shell use
-  - Delayed feedback (commands only execute when buffer fills or newline detected)
+**Features:**
 
-**Why Line-Based for This Shell?**
+- **Command History**: All non-empty commands are automatically saved to history
+- **Arrow Key Navigation**: Use ↑ (Up) and ↓ (Down) arrow keys to navigate through previous commands
+- **Line Editing**: Full line editing support (cursor movement, deletion, etc.)
+- **Multi-line Support**: Handles continuation prompts for unclosed quotes (`dquote>` , `squote>` )
+- **EOF Handling**: Ctrl+D gracefully exits the shell
+- **Interrupt Handling**: Ctrl+C clears current input and starts fresh
 
-We chose line-based input for several reasons:
+**How History Works:**
 
-1. **Immediate Feedback**: Users get instant results after pressing Enter, which is the expected shell behavior
-2. **Simplicity**: `read_line()` handles newline detection automatically, reducing code complexity
-3. **User Experience**: Matches standard shell conventions where commands are submitted with Enter
-4. **Error Handling**: Clear boundaries (each line is a complete command) make error reporting straightforward
-5. **Command Chaining**: Natural support for semicolon-separated commands on a single line
+1. **Storing Commands**: After reading a complete command (with balanced quotes), non-empty commands are automatically added to history
+2. **Navigation**:
+  - Press **↑** (Up Arrow) to cycle backward through history
+  - Press **↓** (Down Arrow) to cycle forward through history
+  - When at the most recent command, pressing ↓ returns to an empty line
+3. **Editing**: You can edit any command from history before executing it
+4. **Multi-line Commands**: Multi-line commands (with continuation prompts) are stored as complete entries
+
+**Example Usage:**
+
+```bash
+$ echo hello
+hello
+$ ls -la
+[directory listing]
+$ pwd
+/home/user
+# Press ↑ to recall "pwd"
+# Press ↑ again to recall "ls -la"
+# Press ↑ again to recall "echo hello"
+# Press ↓ to go forward again
+```
+
+**Continuation Prompts:**
+
+When quotes are not balanced, the shell shows continuation prompts:
+
+- `dquote>`  for unclosed double quotes
+- `squote>`  for unclosed single quotes
+
+History navigation works during continuation prompts as well, allowing you to recall and edit previous multi-line commands.
 
 **Special Case: `cat` Without Arguments**
 
-When `cat` is called without arguments, it reads from stdin line-by-line for immediate echo (lines 364-374 in `src/command.rs`):
+When `cat` is called without arguments, it reads from stdin line-by-line for immediate echo (lines 16-26 in `src/command/cat.rs`):
 
 ```rust
 // In interactive mode, echo lines immediately to stdout
@@ -193,28 +200,34 @@ This maintains the line-based approach even for streaming input, providing immed
 #### 3. Command Parsing (`parse_line()`)
 
 Located in `src/command_call.rs` (lines 29-52), this function:
+
 - Splits input by semicolons (`;`) to support command chaining
 - Tokenizes each command segment with quote and escape handling
 - Separates flags from positional arguments
 - Returns a vector of `CommandCall` structures
 
 **Parsing features:**
+
 - Single quotes: Literal text (no escaping)
 - Double quotes: Supports escaping of `"`, `\`, and `$`
 - Backslash escapes: Outside quotes, escapes any character
 - Flag expansion: `-la` expands to `-l` and `-a`
 
 **Example:**
+
 ```bash
 ls -la /tmp; echo "hello world"
 ```
+
 Parses into two `CommandCall` objects:
+
 1. `{name: "ls", flags: ["-l", "-a"], args: ["/tmp"]}`
 2. `{name: "echo", flags: [], args: ["hello world"]}`
 
 #### 4. Command Execution
 
 The `CommandList::execute()` method (in `src/command.rs`, lines 91-132):
+
 - Looks up the command in the registry
 - Validates required arguments
 - Handles `--help` and `-h` flags
@@ -224,6 +237,7 @@ The `CommandList::execute()` method (in `src/command.rs`, lines 91-132):
 #### 5. Output Handling
 
 The REPL separates stdout and stderr:
+
 - **stdout**: Written directly to terminal (line 44)
 - **stderr**: Written with newline appended (line 49)
 - Both streams are flushed immediately for real-time output
@@ -241,6 +255,7 @@ All commands are implemented from scratch using Rust's standard library. No exte
 **Implementation:** Located in `src/command.rs` at `exit_callback()` (line 235). Returns a `CommandResult` with `should_exit` set to `true`, which causes the REPL loop to break.
 
 **Example:**
+
 ```bash
 $ exit
 ```
@@ -252,6 +267,7 @@ $ exit
 **Usage:** `echo [OPTIONS] [TEXT...]`
 
 **Options:**
+
 - `-e`: Interpret backslash escape sequences
 
 **Description:** Displays a line of text. By default, prints arguments literally. With `-e`, interprets escape sequences like `\n`, `\t`, etc.
@@ -259,6 +275,7 @@ $ exit
 **Implementation:** Located in `src/command.rs` at `echo_callback()` (line 242). Joins all arguments with spaces and prints them. When `-e` flag is present, processes escape sequences through `map_echo_escape()` (line 291).
 
 **Supported escape sequences (with `-e`):**
+
 - `\a`: Alert (BEL)
 - `\b`: Backspace
 - `\e`: Escape
@@ -271,6 +288,7 @@ $ exit
 - `\c`: Stop output (no newline)
 
 **Examples:**
+
 ```bash
 $ echo hello world
 hello world
@@ -297,6 +315,7 @@ hello    world
 **Implementation:** Located in `src/command.rs` at `pwd_callback()` (line 307). Uses `env::current_dir()` to retrieve the current directory and displays it.
 
 **Example:**
+
 ```bash
 $ pwd
 /home/user/projects/0-shell
@@ -313,6 +332,7 @@ $ pwd
 **Implementation:** Located in `src/command.rs` at `cd_callback()` (line 320). Uses `env::set_current_dir()` to change directories. Defaults to `HOME` environment variable if no argument is provided, or `/` if `HOME` is not set.
 
 **Examples:**
+
 ```bash
 $ cd /tmp
 $ pwd
@@ -334,43 +354,24 @@ $ pwd
 **Usage:** `ls [OPTIONS] [FILE...]`
 
 **Options:**
+
 - `-a`: List all entries, including hidden files (starting with `.`)
-- `-l`: Use long listing format (see **`ls -l` output format** below)
+- `-l`: Use long listing format (permissions, size, date, name)
 - `-F`: Append indicator characters (`/` for directories, `*` for executables)
 
 **Description:** Lists directory contents. If no path is specified, lists the current directory.
 
-**Implementation:** Located in `src/command.rs` at `ls_callback()`. Uses `fs::read_dir()` to read directory entries. Supports multiple paths, showing each path's header when multiple are specified.
+**Implementation:** Located in `src/command.rs` at `ls_callback()` (line 555). Uses `fs::read_dir()` to read directory entries. Supports multiple paths, showing each path's header when multiple are specified.
 
-#### `ls -l` output format
+**Long format details:**
 
-The `-l` option produces a long listing with one line per file/directory. The layout is:
-
-1. **First line:** `total N`  
-   - `N` = total number of 1024-byte blocks used by the listed entries (disk usage).
-
-2. **Per-entry lines** (one line per file or directory), in order:
-   - **File permissions** — 10 characters: type (`d` = directory, `-` = file) + 9 permission bits (e.g. `rwxr-xr-x`).
-   - **Number of links** — Hard link count (integer).
-   - **Owner name** — User that owns the file (Unix); on Windows may be `-` if unavailable.
-   - **Owner group** — Group that owns the file (Unix); on Windows may be `-` or a numeric id if unavailable.
-   - **File size** — Size in bytes (right-aligned).
-   - **Time of last modification** — `Mon DD HH:MM` (e.g. `Jan 18 20:26`, `Feb  4 22:19`).
-   - **File or directory name** — Basename; with `-F`, directories get `/` and executables get `*`.
-
-**Example (real `ls -l` output):**
-```text
-$ ls -l
-total 37
--rw-r--r-- 1 leeyn 197609  3641 Jan 18 20:26 0-shell.md
--rw-r--r-- 1 leeyn 197609  7437 Feb  4 22:19 Cargo.lock
--rw-r--r-- 1 leeyn 197609    99 Feb  4 22:19 Cargo.toml
--rw-r--r-- 1 leeyn 197609 17108 Feb  4 22:00 README.md
-drwxr-xr-x 1 leeyn 197609     0 Feb  4 22:00 src/
-drwxr-xr-x 1 leeyn 197609     0 Jan 21 01:23 target/
-```
+- Permissions: Unix-style (e.g., `drwxr-xr-x`)
+- Size: File size in bytes
+- Date: Modification time in `MMM DD HH:MM` format
+- Name: File/directory name with type indicators when `-F` is used
 
 **Examples:**
+
 ```bash
 $ ls
 file1.txt  file2.txt  directory1
@@ -379,16 +380,14 @@ $ ls -a
 .  ..  .hidden  file1.txt  file2.txt
 
 $ ls -l
-total 6
--rw-r--r-- 1 user group  1024 Dec 15 14:30 file1.txt
-drwxr-xr-x 1 user group  4096 Dec 15 14:31 directory1
+-rw-r--r--     1024 Dec 15 14:30 file1.txt
+drwxr-xr-x     4096 Dec 15 14:31 directory1
 
 $ ls -laF
-total 8
-drwxr-xr-x 1 user group  4096 Dec 15 14:31 ./
-drwxr-xr-x 1 user group  4096 Dec 15 14:30 ../
--rw-r--r-- 1 user group  1024 Dec 15 14:30 file1.txt
-drwxr-xr-x 1 user group  4096 Dec 15 14:31 directory1/
+drwxr-xr-x     4096 Dec 15 14:31 ./
+drwxr-xr-x     4096 Dec 15 14:30 ../
+-rw-r--r--     1024 Dec 15 14:30 file1.txt
+drwxr-xr-x     4096 Dec 15 14:31 directory1/
 ```
 
 ---
@@ -402,6 +401,7 @@ drwxr-xr-x 1 user group  4096 Dec 15 14:31 directory1/
 **Implementation:** Located in `src/command.rs` at `mkdir_callback()` (line 337). Uses `fs::create_dir_all()` which creates directories recursively. If a directory already exists, it's silently skipped (no error).
 
 **Examples:**
+
 ```bash
 $ mkdir newdir
 $ mkdir parent/child/grandchild
@@ -419,6 +419,7 @@ $ mkdir dir1 dir2 dir3
 **Implementation:** Located in `src/command.rs` at `cat_callback()` (line 355). Uses `File::open()` and `BufReader` to read files. When no arguments are provided, reads from stdin line by line and echoes immediately.
 
 **Examples:**
+
 ```bash
 $ cat file.txt
 This is the content of file.txt
@@ -446,6 +447,7 @@ Type here and press Enter
 **Limitations:** Currently only supports file copying. Directory copying with `-r` flag is not yet implemented.
 
 **Examples:**
+
 ```bash
 $ cp source.txt dest.txt
 $ cp file1.txt file2.txt /tmp
@@ -463,6 +465,7 @@ $ cp source.txt /tmp/dest.txt
 **Implementation:** Located in `src/command.rs` at `mv_callback()` (line 469). Uses `fs::rename()` which works for both files and directories. The `resolve_destination()` helper function handles directory destinations.
 
 **Examples:**
+
 ```bash
 $ mv old.txt new.txt
 $ mv file1.txt file2.txt /tmp
@@ -476,6 +479,7 @@ $ mv olddir newdir
 **Usage:** `rm [OPTIONS] FILE...`
 
 **Options:**
+
 - `-r` or `-R`: Recursively remove directories and their contents
 
 **Description:** Removes files or directories. Without `-r`, directories cannot be removed (returns an error). With `-r`, recursively removes directories and all their contents.
@@ -483,6 +487,7 @@ $ mv olddir newdir
 **Implementation:** Located in `src/command.rs` at `rm_callback()` (line 516). Uses `fs::remove_file()` for files and `fs::remove_dir_all()` for recursive directory removal. Validates that paths exist and checks if a directory is being removed without the `-r` flag.
 
 **Examples:**
+
 ```bash
 $ rm file.txt
 $ rm -r directory
@@ -502,6 +507,7 @@ The command parser (`src/command_call.rs`) handles complex input scenarios:
 - **Backslash (`\`)**: Outside quotes, escapes any following character
 
 **Examples:**
+
 ```bash
 $ echo 'hello world'        # Single token: "hello world"
 $ echo "hello world"        # Single token: "hello world"
@@ -512,11 +518,13 @@ $ echo "hello \"world\""    # Token: 'hello "world"'
 ### Flag Parsing
 
 Flags are automatically separated from arguments:
+
 - Short flags can be combined: `-la` → `["-l", "-a"]`
 - Long flags are preserved: `--help` → `["--help"]`
 - Flags must come before positional arguments
 
 **Examples:**
+
 ```bash
 $ ls -la /tmp              # flags: ["-l", "-a"], args: ["/tmp"]
 $ ls --all -l /tmp          # flags: ["--all", "-l"], args: ["/tmp"]
@@ -531,6 +539,178 @@ $ ls -l; pwd; echo done
 ```
 
 Each command is executed sequentially, and the shell waits for each to complete before executing the next.
+
+## History Expansion
+
+History expansion is a shell feature that allows users to reference and reuse previous commands from the command history using the `!` (exclamation mark) character. This feature enables quick command repetition, modification, and recall without retyping entire commands.
+
+### Overview
+
+History expansion occurs immediately after reading a complete command line, before word splitting and command execution. The `!` character serves as a special operator that triggers history substitution, allowing users to:
+
+- Repeat the previous command
+- Reference commands by their position in history
+- Search for commands by their starting text
+- Extract specific arguments from previous commands
+- Modify previous commands before re-execution
+
+### Event Designators
+
+Event designators select which history entry to use:
+
+- `!!` - Refer to the previous command (most common usage)
+- `!n` - Refer to history entry number `n` (e.g., `!42` executes command #42)
+- `!-n` - Refer to the entry `n` commands ago (e.g., `!-2` executes the command from two commands back)
+- `!string` - Most recent command starting with `string` (e.g., `!ls` executes the most recent `ls` command)
+- `!?string[?]` - Most recent command containing `string` (e.g., `!?file` finds commands containing "file")
+- `^string1^string2^` - Quick substitution: repeat last command replacing `string1` with `string2`
+- `!#` - The entire command line typed so far
+
+### Word Designators
+
+Word designators select specific words (arguments) from a history entry, separated by `:`:
+
+- `0` - The command word itself
+- `n` - The nth word (1-indexed)
+- `^` - First argument (word 1)
+- `$` - Last word
+- `*` - All words except the command (words 1 through last)
+- `x-y` - Range of words from x to y
+
+**Examples:**
+
+- `!!:$` - Gets the last word (argument) of the previous command
+- `!ls:2` - Gets the second argument of the most recent `ls` command
+- `!!:*` - Gets all arguments from the previous command
+
+### Escaping and Disabling
+
+The `!` character can be escaped or inhibited:
+
+- **Backslash (`\`)**: Escapes the `!` character, treating it literally
+- **Single quotes (`'`)**: Inhibits history expansion entirely within quotes
+- **Double quotes (`"`)**: History expansion still occurs, but can be escaped with backslash
+
+#### Behavior Inside Quotes
+
+**Important:** History expansion behavior differs significantly between single and double quotes:
+
+1. **Single quotes (`'`) - History expansion is disabled:**
+  ```bash
+   $ echo 'Hello!'
+   Hello!
+  ```
+   The `!` inside single quotes is treated as a literal character. No history expansion occurs.
+2. **Double quotes (`"`) - History expansion is enabled:**
+  ```bash
+   $ echo "something!"
+  ```
+   **With history expansion ON:** The shell will attempt to expand `!` as a history reference. If `!` is followed by a space, newline, or other non-expandable character, it may be treated literally, but if followed by valid history expansion syntax (like `!!`, `!n`, `!string`), it will trigger expansion.
+   **Example with valid expansion:**
+   **Example with literal `!`:**
+   If `!` is at the end of a word and not followed by a valid expansion pattern, it's typically treated literally in modern shells.
+3. **Escaping inside double quotes:**
+  ```bash
+   $ echo "something\!"
+   something!
+  ```
+   Using backslash before `!` inside double quotes prevents history expansion.
+
+#### Enabling and Disabling History Expansion
+
+History expansion can be controlled via shell options:
+
+**Disable history expansion:**
+
+```bash
+setopt NO_BANG_HIST
+```
+
+**Enable history expansion:**
+
+```bash
+setopt BANG_HIST
+```
+
+**Check current status:**
+
+```bash
+set -o | grep histexpand
+# or
+echo $-
+# Look for 'H' in the output (H = history expansion enabled)
+```
+
+**Behavior when disabled:**
+When history expansion is disabled (`set +H`), the `!` character is treated as a literal character everywhere:
+
+```bash
+$ set +H
+$ echo "something!"
+something!
+$ echo 'Hello!'
+Hello!
+$ !!
+!!
+```
+
+All `!` characters are treated literally, and history references like `!!` will not be expanded.
+
+**Behavior when enabled (default in interactive bash):**
+
+```bash
+$ set -H
+$ echo "something!"
+something
+$ ls -la
+$ !!
+ls -la
+```
+
+History expansion is active, and `!!` references the previous command.
+
+**Note:** In bash, history expansion is enabled by default in interactive shells but disabled in non-interactive shells (scripts). The `set +H` / `set -H` commands control this behavior.
+
+### Common Use Cases
+
+1. **Repeat last command:**
+  ```bash
+   $ ls -la /tmp
+   file1.txt  file2.txt
+   $ !!
+   ls -la /tmp
+   file1.txt  file2.txt
+  ```
+2. **Repeat with modification:**
+  ```bash
+   $ cat file1.txt
+   $ ^file1^file2^
+   cat file2.txt
+  ```
+3. **Reuse arguments:**
+  ```bash
+   $ ls -l /home/user/documents
+   $ cd !!:$
+   cd /home/user/documents
+  ```
+4. **Search by prefix:**
+  ```bash
+   $ ls -la /tmp
+   $ mkdir newdir
+   $ !ls
+   ls -la /tmp
+  ```
+
+### Implementation Status
+
+History expansion is currently **not implemented** in 0-shell (see tasklist). When implemented, it would require:
+
+- Maintaining a command history buffer
+- Parsing `!` sequences before command execution
+- Resolving history references to actual command strings
+- Handling edge cases (empty history, invalid references, etc.)
+
+**Note:** History expansion is a powerful but potentially dangerous feature. In production shells, it's often disabled by default in non-interactive shells and can be controlled via shell options (e.g., `set +H` to disable in bash).
 
 ## Error Handling
 
@@ -552,6 +732,7 @@ cargo test
 ```
 
 Tests cover:
+
 - Command parsing and tokenization
 - Individual command functionality
 - Error handling
@@ -566,9 +747,12 @@ Tests cover:
 ## License
 
 This project is part of an educational exercise to build a minimal shell from scratch.
+
 ```
 
 #### Tasklist
 - [ ] add handling of ! (Sergei)
 - [ ] add proper formatting for ls (Gigi)
 - [ ] add ls -laF to list similar to bash (Allen)
+```
+
