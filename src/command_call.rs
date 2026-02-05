@@ -1,7 +1,9 @@
-/// Represents a parsed command call with its name, flags, and arguments.
-///
-/// A command call is generated from a single command segment (e.g., between semicolons).
-/// Flags are separated from arguments to allow for easier command processing.
+//! Line parsing and tokenization for 0-shell.
+//!
+//! Handles semicolon-separated commands, quoted strings, backslash escapes,
+//! and separation of flags from positional arguments.
+
+/// A parsed command: name, flags, and args (one `;`-separated segment).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandCall {
     /// The name of the command (e.g., "ls", "echo"). Always lowercase.
@@ -13,42 +15,66 @@ pub struct CommandCall {
     pub args: Vec<String>,
 }
 
-impl CommandCall {}
+/// Tracks quote/escape state for tokenization and unclosed-quote detection.
+#[derive(Default)]
+struct QuoteState {
+    in_single_quote: bool,
+    in_double_quote: bool,
+    escaped: bool,
+}
+
+impl QuoteState {
+    fn advance(&mut self, c: char) {
+        if self.escaped {
+            self.escaped = false;
+            return;
+        }
+        if c == '\\' && !self.in_single_quote {
+            self.escaped = true;
+            return;
+        }
+        if c == '\'' && !self.in_double_quote {
+            self.in_single_quote = !self.in_single_quote;
+        } else if c == '"' && !self.in_single_quote {
+            self.in_double_quote = !self.in_double_quote;
+        }
+    }
+
+    fn unclosed_prompt(&self) -> Option<&'static str> {
+        if self.in_double_quote {
+            Some(DQUOTE_PROMPT)
+        } else if self.in_single_quote {
+            Some(SQUOTE_PROMPT)
+        } else {
+            None
+        }
+    }
+}
+
+/// Continuation prompt when inside an unclosed double quote (bash-style).
+const DQUOTE_PROMPT: &str = "dquote> ";
+/// Continuation prompt when inside an unclosed single quote.
+const SQUOTE_PROMPT: &str = "squote> ";
 
 /// Parses a line of input into a sequence of command calls.
 ///
-/// This function handles:
-/// 1. Command chaining with semicolons (`;`).
-/// 2. Tokenization with support for quotes and escapes.
-/// 3. Separation of flags from positional arguments.
-///
-/// # Example
-/// ```
-/// let calls = parse_line("ls -la; echo \"hello world\"");
-/// ```
+/// Handles: command chaining with `;`, tokenization (quotes/escapes), and separation of flags vs args.
 pub fn parse_line(input: &str) -> Vec<CommandCall> {
-    input
-        .split(';') // Split by semicolon to support command chaining
-        .filter_map(|chunk| {
-            let chunk = chunk.trim();
-            if chunk.is_empty() {
-                return None;
-            }
+    input.split(';').filter_map(|chunk| parse_chunk(chunk.trim())).collect()
+}
 
-            let mut tokens = tokenize(chunk);
-            if tokens.is_empty() {
-                return None;
-            }
-
-            // The first token is always the command name
-            let name = tokens.remove(0).to_lowercase();
-
-            // Separate remaining tokens into flags and positional arguments
-            let (flags, args) = separate_flags_from_args(tokens);
-
-            Some(CommandCall { name, flags, args })
-        })
-        .collect()
+/// Parses one semicolon-separated segment into a single command call, or `None` if empty.
+fn parse_chunk(chunk: &str) -> Option<CommandCall> {
+    if chunk.is_empty() {
+        return None;
+    }
+    let mut tokens = tokenize(chunk);
+    if tokens.is_empty() {
+        return None;
+    }
+    let name = tokens.remove(0).to_lowercase();
+    let (flags, args) = separate_flags_from_args(tokens);
+    Some(CommandCall { name, flags, args })
 }
 
 /// Separates command tokens into flags and positional arguments.
@@ -62,18 +88,12 @@ fn separate_flags_from_args(tokens: Vec<String>) -> (Vec<String>, Vec<String>) {
 
     for token in tokens {
         if token.starts_with('-') && token != "-" {
-            // Handle combined short flags like -al (split into -a and -l)
-            // But skip long flags starting with --
             if token.len() > 2 && !token.starts_with("--") {
-                for c in token.chars().skip(1) {
-                    flags.push(format!("-{}", c));
-                }
+                flags.extend(token.chars().skip(1).map(|c| format!("-{}", c)));
             } else {
-                // Single flag or long flag: -a, --help
                 flags.push(token);
             }
         } else {
-            // Treat as a positional argument
             args.push(token);
         }
     }
@@ -91,49 +111,46 @@ fn separate_flags_from_args(tokens: Vec<String>) -> (Vec<String>, Vec<String>) {
 pub fn tokenize(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-    let mut escaped = false;
-    let mut chars = input.chars().peekable();
+    let mut state = QuoteState::default();
 
-    while let Some(c) = chars.next() {
-        if escaped {
-            current.push_str(&handle_escape(c, in_double_quote));
-            escaped = false;
+    for c in input.chars() {
+        if state.escaped {
+            current.push_str(&handle_escape(c, state.in_double_quote));
+            state.escaped = false;
             continue;
         }
 
+        state.advance(c);
+
         match c {
-            // Enter/Exit escaping state (only outside single quotes)
-            '\\' if !in_single_quote => {
-                escaped = true;
-            }
-            // Single quotes: strictly literal until the next single quote
-            '\'' if !in_double_quote => {
-                in_single_quote = !in_single_quote;
-            }
-            // Double quotes: toggle state, allows certain escapes
-            '"' if !in_single_quote => {
-                in_double_quote = !in_double_quote;
-            }
-            // Whitespace: splits tokens if not inside quotes
-            c if c.is_whitespace() && !in_single_quote && !in_double_quote => {
+            '\\' if !state.in_single_quote => { /* advance() set escaped; don't push \ */ }
+            '\'' if state.in_double_quote => current.push(c), // literal ' inside "..."
+            '"' if state.in_single_quote => current.push(c),  // literal " inside '...'
+            '\'' | '"' => { /* delimiter; already toggled in advance */ }
+            c if c.is_whitespace() && !state.in_single_quote && !state.in_double_quote => {
                 if !current.is_empty() {
                     tokens.push(current.clone());
                     current.clear();
                 }
             }
-            // All other characters are part of the current token
             _ => current.push(c),
         }
     }
 
-    // Push the final token if it exists
     if !current.is_empty() {
         tokens.push(current);
     }
 
     tokens
+}
+
+/// Returns the continuation prompt if the input has an unclosed quote, otherwise `None`.
+pub fn unclosed_quote_prompt(input: &str) -> Option<&'static str> {
+    let mut state = QuoteState::default();
+    for c in input.chars() {
+        state.advance(c);
+    }
+    state.unclosed_prompt()
 }
 
 /// Logic for handling backslash escape sequences.
@@ -171,6 +188,15 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_quote_inside_quote() {
+        // Single quote inside double quotes is literal (bash behavior)
+        let tokens = tokenize("echo \"'something\"");
+        assert_eq!(tokens, vec!["echo", "'something"]);
+        let tokens = tokenize("echo '\"double\"'");
+        assert_eq!(tokens, vec!["echo", "\"double\""]);
+    }
+
+    #[test]
     fn test_tokenize_escapes() {
         let tokens = tokenize("echo \\\"hello\\ world\\\"");
         assert_eq!(tokens, vec!["echo", "\"hello world\""]);
@@ -197,5 +223,13 @@ mod tests {
     fn test_parse_line_long_flags() {
         let calls = parse_line("ls --all /tmp");
         assert_eq!(calls[0].flags, vec!["--all"]);
+    }
+
+    #[test]
+    fn test_unclosed_quote_prompt() {
+        assert_eq!(unclosed_quote_prompt("echo \"hello"), Some("dquote> "));
+        assert_eq!(unclosed_quote_prompt("echo 'hello"), Some("squote> "));
+        assert_eq!(unclosed_quote_prompt("echo \"hello\""), None);
+        assert_eq!(unclosed_quote_prompt("echo 'hello'"), None);
     }
 }
