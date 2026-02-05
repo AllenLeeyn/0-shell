@@ -10,6 +10,7 @@ use xattr;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
+use super::util;
 use super::CommandResult;
 
 pub fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
@@ -59,12 +60,7 @@ pub fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
                                 }
                             }
                         }
-                        Err(e) => {
-                            if !result.stderr.is_empty() {
-                                result.stderr.push('\n');
-                            }
-                            result.stderr.push_str(&format!("ls: {}", e));
-                        }
+                        Err(e) => util::append_stderr(&mut result, &format!("ls: {}", e)),
                     }
                 }
 
@@ -120,14 +116,10 @@ pub fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
                     result.stdout.push('\n');
                 }
             }
-            Err(e) => {
-                if !result.stderr.is_empty() {
-                    result.stderr.push('\n');
-                }
-                result
-                    .stderr
-                    .push_str(&format!("ls: cannot access '{}': {}", path_str, e));
-            }
+            Err(e) => util::append_stderr(
+                &mut result,
+                &format!("ls: cannot access '{}': {}", path_str, e),
+            ),
         }
     }
 

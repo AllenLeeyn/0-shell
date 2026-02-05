@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::util;
+use super::util::{self, resolve_destination};
 use super::CommandResult;
 
 pub fn mv_callback(_flags: Vec<String>, args: Vec<String>) -> CommandResult {
@@ -26,24 +26,16 @@ pub fn mv_callback(_flags: Vec<String>, args: Vec<String>) -> CommandResult {
 
     for source_str in sources {
         let src_path = Path::new(source_str);
-        match util::resolve_destination(src_path, dest_path) {
+        match resolve_destination(src_path, dest_path) {
             Ok(final_dest) => {
                 if let Err(e) = fs::rename(src_path, final_dest) {
-                    if !result.stderr.is_empty() {
-                        result.stderr.push('\n');
-                    }
-                    result.stderr.push_str(&format!(
-                        "mv: cannot move '{}' to '{}': {}",
-                        source_str, destination[0], e
-                    ));
+                    util::append_stderr(
+                        &mut result,
+                        &format!("mv: cannot move '{}' to '{}': {}", source_str, destination[0], e),
+                    );
                 }
             }
-            Err(e) => {
-                if !result.stderr.is_empty() {
-                    result.stderr.push('\n');
-                }
-                result.stderr.push_str(&format!("mv: {}", e));
-            }
+            Err(e) => util::append_stderr(&mut result, &format!("mv: {}", e)),
         }
     }
 

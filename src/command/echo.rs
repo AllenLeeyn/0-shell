@@ -3,12 +3,8 @@
 use super::CommandResult;
 
 pub fn echo_callback(flags: Vec<String>, args: Vec<String>) -> CommandResult {
-    let mut interpret = false;
+    let interpret = flags.iter().any(|f| f == "-e");
     let mut result = CommandResult::new();
-
-    if flags.iter().any(|f| f == "-e") {
-        interpret = true;
-    }
 
     let input = args.join(" ");
 
