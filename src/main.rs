@@ -53,7 +53,7 @@ fn write_command_result(
     Ok(())
 }
 
-/// Reads a full line from stdin, showing continuation prompts (e.g. `dquote> `) until quotes balance.
+/// Reads a full line from stdin, showing continuation prompt `> ` until quotes balance (bash PS2 style).
 /// Returns `None` on EOF.
 fn read_line_with_continuation<W: Write>(out: &mut W) -> io::Result<Option<String>> {
     let mut raw_input = String::new();

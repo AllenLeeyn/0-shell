@@ -41,20 +41,16 @@ impl QuoteState {
     }
 
     fn unclosed_prompt(&self) -> Option<&'static str> {
-        if self.in_double_quote {
-            Some(DQUOTE_PROMPT)
-        } else if self.in_single_quote {
-            Some(SQUOTE_PROMPT)
+        if self.in_double_quote || self.in_single_quote {
+            Some(CONTINUATION_PROMPT)
         } else {
             None
         }
     }
 }
 
-/// Continuation prompt when inside an unclosed double quote (bash-style).
-const DQUOTE_PROMPT: &str = "dquote> ";
-/// Continuation prompt when inside an unclosed single quote.
-const SQUOTE_PROMPT: &str = "squote> ";
+/// Continuation prompt when input has unclosed quote (bash PS2 style: just `> `).
+const CONTINUATION_PROMPT: &str = "> ";
 
 /// Parses a line of input into a sequence of command calls.
 ///
@@ -227,8 +223,8 @@ mod tests {
 
     #[test]
     fn test_unclosed_quote_prompt() {
-        assert_eq!(unclosed_quote_prompt("echo \"hello"), Some("dquote> "));
-        assert_eq!(unclosed_quote_prompt("echo 'hello"), Some("squote> "));
+        assert_eq!(unclosed_quote_prompt("echo \"hello"), Some("> "));
+        assert_eq!(unclosed_quote_prompt("echo 'hello"), Some("> "));
         assert_eq!(unclosed_quote_prompt("echo \"hello\""), None);
         assert_eq!(unclosed_quote_prompt("echo 'hello'"), None);
     }
