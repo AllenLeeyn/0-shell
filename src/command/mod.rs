@@ -141,7 +141,7 @@ pub fn command_list() -> CommandList {
     cmds.register(
         "echo".to_string(),
         Command::new(
-            "echo [-e] [text ...] - display a line of text",
+            "echo [-e] [text ...] - display a line of text (-e interpret escapes)",
             false,
             echo::echo_callback,
         ),
@@ -165,7 +165,7 @@ pub fn command_list() -> CommandList {
     cmds.register(
         "mkdir".to_string(),
         Command::new(
-            "mkdir DIRECTORY... - create directories",
+            "mkdir [-p] DIRECTORY... - create directories (-p parents)",
             true,
             mkdir::mkdir_callback,
         ),
@@ -181,7 +181,7 @@ pub fn command_list() -> CommandList {
     cmds.register(
         "cp".to_string(),
         Command::new(
-            "cp SOURCE DEST or cp SOURCE... DIRECTORY - copy files and directories",
+            "cp SOURCE DEST or cp -r SOURCE... DIRECTORY - copy files (use -r for directories)",
             true,
             cp::cp_callback,
         ),

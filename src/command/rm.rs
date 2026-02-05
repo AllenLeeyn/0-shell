@@ -3,10 +3,13 @@
 use std::fs;
 use std::path::Path;
 
+use super::util;
 use super::CommandResult;
 
 pub fn rm_callback(flags: Vec<String>, args: Vec<String>) -> CommandResult {
-    let recursive = flags.iter().any(|f| f == "-r" || f == "-R");
+    let recursive = flags
+        .iter()
+        .any(|f| f == "-r" || f == "-R" || f == "--recursive");
     let mut result = CommandResult::new();
 
     for path_str in args {
@@ -28,10 +31,7 @@ pub fn rm_callback(flags: Vec<String>, args: Vec<String>) -> CommandResult {
         };
 
         if let Err(e) = remove_res {
-            if !result.stderr.is_empty() {
-                result.stderr.push('\n');
-            }
-            result.stderr.push_str(&e);
+            util::append_stderr(&mut result, &e);
         }
     }
 
