@@ -100,20 +100,43 @@ pub fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
                         ));
                     }
                 } else {
-                    for (mut name, metadata) in rows {
-                        if classify {
-                            let ft = metadata.file_type();
-                            if ft.is_dir() {
-                                name.push('/');
-                            } else if ft.is_symlink() {
-                                name.push('@');
-                            } else if is_executable(&metadata) {
-                                name.push('*');
+                    let names: Vec<String> = rows
+                        .into_iter()
+                        .map(|(mut name, metadata)| {
+                            if classify {
+                                let ft = metadata.file_type();
+                                if ft.is_dir() {
+                                    name.push('/');
+                                } else if ft.is_symlink() {
+                                    name.push('@');
+                                } else if is_executable(&metadata) {
+                                    name.push('*');
+                                }
+                            }
+                            name
+                        })
+                        .collect();
+
+                    if names.is_empty() {
+                        return result;
+                    }
+
+                    let (width, _) = term_size::dimensions().unwrap_or((80, 24));
+                    let max_len = names.iter().map(|n| n.len()).max().unwrap_or(0) + 2;
+                    let cols = (width as usize / max_len).max(1);
+                    let rows = (names.len() + cols - 1) / cols;
+
+                    for row in 0..rows {
+                        for col in 0..cols {
+                            if let Some(name) = names.get(row + col * rows) {
+                                result.stdout.push_str(name);
+                                for _ in 0..(max_len - name.len()) {
+                                    result.stdout.push(' ');
+                                }
                             }
                         }
-                        result.stdout.push_str(&format!("{}  ", name));
+                        result.stdout.push('\n');
                     }
-                    result.stdout.push('\n');
                 }
             }
             Err(e) => util::append_stderr(
