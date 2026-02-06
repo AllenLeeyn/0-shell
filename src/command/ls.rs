@@ -1,4 +1,8 @@
 //! `ls` - list directory contents.
+//!
+//! In long form (`-l`), the `@` / `+` suffix (extended attributes / ACL) is computed
+//! after resolving the path. For symlinks, the suffix therefore reflects the
+//! **target's** attributes, not the link's.
 
 use std::fs;
 use std::path::Path;
@@ -66,78 +70,12 @@ pub fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
 
                 rows.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
 
-                if long {
-                    let total_blocks: u64 = rows.iter().map(|(_, m)| metadata_blocks_1k(m)).sum();
-                    result
-                        .stdout
-                        .push_str(&format!("total {}\n", total_blocks));
-                    for (mut name, metadata) in rows {
-                        let full_path = Path::new(path_str).join(&name);
-                        if classify {
-                            let ft = metadata.file_type();
-                            if ft.is_dir() {
-                                name.push('/');
-                            } else if ft.is_symlink() {
-                                name.push('@');
-                            } else if is_executable(&metadata) {
-                                name.push('*');
-                            }
-                        }
-                        let mode = format!(
-                            "{}{}",
-                            parse_permissions(&metadata),
-                            permission_suffix(&full_path)
-                        );
-                        let nlink = metadata_nlink(&metadata);
-                        let owner = metadata_owner(&metadata);
-                        let group = metadata_group(&metadata);
-                        let size = metadata_size(&metadata);
-                        let modified: DateTime<Local> = metadata.modified().unwrap().into();
-                        let time_str = modified.format("%b %e %H:%M").to_string();
-                        result.stdout.push_str(&format!(
-                            "{:11} {:>2} {} {} {:>8} {} {}\n",
-                            mode, nlink, owner, group, size, time_str, name
-                        ));
-                    }
+                let output = if long {
+                    ls_long(path_str, &rows, classify)
                 } else {
-                    let names: Vec<String> = rows
-                        .into_iter()
-                        .map(|(mut name, metadata)| {
-                            if classify {
-                                let ft = metadata.file_type();
-                                if ft.is_dir() {
-                                    name.push('/');
-                                } else if ft.is_symlink() {
-                                    name.push('@');
-                                } else if is_executable(&metadata) {
-                                    name.push('*');
-                                }
-                            }
-                            name
-                        })
-                        .collect();
-
-                    if names.is_empty() {
-                        return result;
-                    }
-
-                    let (width, _) = term_size::dimensions().unwrap_or((80, 24));
-                    let max_len = names.iter().map(|n| n.len()).max().unwrap_or(0) + 2;
-                    let cols = (width as usize / max_len).max(1);
-                    let rows = (names.len() + cols - 1) / cols;
-
-                    for row in 0..rows {
-                        for col in 0..cols {
-                            if let Some(name) = names.get(row + col * rows) {
-                                result.stdout.push_str(name);
-                                for _ in 0..(max_len - name.len()) {
-                                    result.stdout.push(' ');
-                                }
-                            }
-                        }
-                        result.stdout.push('\n');
-                    }
-                }
+                    ls_std(&rows, classify)
+                };
+                result.stdout.push_str(&output);
             }
             Err(e) => util::append_stderr(
                 &mut result,
@@ -147,6 +85,117 @@ pub fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
     }
 
     result
+}
+
+/// Standard (short) listing: multi-column names with optional -F classify suffixes.
+fn ls_std(rows: &[(String, std::fs::Metadata)], classify: bool) -> String {
+    let names: Vec<String> = rows
+        .iter()
+        .map(|(name, metadata)| {
+            let mut name = name.clone();
+            if classify {
+                let ft = metadata.file_type();
+                if ft.is_dir() {
+                    name.push('/');
+                } else if ft.is_symlink() {
+                    name.push('@');
+                } else if is_executable(metadata) {
+                    name.push('*');
+                }
+            }
+            name
+        })
+        .collect();
+
+    if names.is_empty() {
+        return String::new();
+    }
+
+    let (width, _) = term_size::dimensions().unwrap_or((80, 24));
+    let max_len = names.iter().map(|n| n.len()).max().unwrap_or(0) + 2;
+    let cols = (width as usize / max_len).max(1);
+    let nrows = (names.len() + cols - 1) / cols;
+
+    let mut out = String::new();
+    for row in 0..nrows {
+        for col in 0..cols {
+            if let Some(name) = names.get(row + col * nrows) {
+                out.push_str(name);
+                for _ in 0..(max_len - name.len()) {
+                    out.push(' ');
+                }
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// Long listing: one line per file with mode, nlink, owner, group, size, time, name.
+fn ls_long(path_str: &str, rows: &[(String, std::fs::Metadata)], classify: bool) -> String {
+    let total_blocks: u64 = rows.iter().map(|(_, m)| metadata_blocks_1k(m)).sum();
+    let mut out = format!("total {}\n", total_blocks);
+
+    let mut table: Vec<(String, String, String, String, String, String, String)> =
+        Vec::with_capacity(rows.len());
+    for (name, metadata) in rows {
+        let mut name = name.clone();
+        let full_path = Path::new(path_str).join(&name);
+        if classify {
+            let ft = metadata.file_type();
+            if ft.is_dir() {
+                name.push('/');
+            } else if ft.is_symlink() {
+                name.push('@');
+            } else if is_executable(metadata) {
+                name.push('*');
+            }
+        }
+        let mode = format!(
+            "{}{}",
+            parse_permissions(metadata),
+            permission_suffix(&full_path)
+        );
+        let nlink = metadata_nlink(metadata).to_string();
+        let owner = metadata_owner(metadata);
+        let group = metadata_group(metadata);
+        let size = metadata_size(metadata).to_string();
+        let modified: DateTime<Local> = metadata.modified().unwrap().into();
+        let time_str = modified.format("%b %e %H:%M").to_string();
+        table.push((mode, nlink, owner, group, size, time_str, name));
+    }
+
+    let w_mode = column_width(table.iter().map(|r| r.0.len()), 1);
+    let w_nlink = column_width(table.iter().map(|r| r.1.len()), 1);
+    let w_owner = column_width(table.iter().map(|r| r.2.len()), 1);
+    let w_group = column_width(table.iter().map(|r| r.3.len()), 1);
+    let w_size = column_width(table.iter().map(|r| r.4.len()), 1);
+    let w_time = column_width(table.iter().map(|r| r.5.len()), 1);
+
+    for (mode, nlink, owner, group, size, time_str, name) in table {
+        out.push_str(&format!(
+            "{0:<7$} {1:>8$} {2:<9$} {3:<10$} {4:>11$} {5:<12$} {6}\n",
+            mode,
+            nlink,
+            owner,
+            group,
+            size,
+            time_str,
+            name,
+            w_mode,
+            w_nlink,
+            w_owner,
+            w_group,
+            w_size,
+            w_time
+        ));
+    }
+    out
+}
+
+/// Max width for a column from all entries in that column, with a minimum width.
+fn column_width(lens: impl IntoIterator<Item = usize>, min_width: usize) -> usize {
+    lens.into_iter().max().unwrap_or(0).max(min_width)
 }
 
 fn metadata_size(metadata: &std::fs::Metadata) -> u64 {
@@ -276,8 +325,7 @@ fn permission_suffix(path: &Path) -> &'static str {
     let has_acl = false;
 
     match (has_xattr, has_acl) {
-        (true, true) => "@+",
-        (true, false) => "@",
+        (true, true) | (true, false) => "@",
         (false, true) => "+",
         (false, false) => "",
     }

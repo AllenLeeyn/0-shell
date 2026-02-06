@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::util::{self, abs_path, dest_under_src, is_same_path};
+use super::util::{self, dest_under_src, is_same_path};
 use super::CommandResult;
 
 const RECURSIVE_FLAGS: &[&str] = &["-r", "-R", "--recursive"];
