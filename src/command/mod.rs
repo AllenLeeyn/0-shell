@@ -2,6 +2,7 @@
 
 mod cat;
 mod cd;
+mod clear;
 mod cp;
 mod echo;
 mod exit;
@@ -177,6 +178,10 @@ pub fn command_list() -> CommandList {
             false,
             cat::cat_callback,
         ),
+    );
+    cmds.register(
+        "clear".to_string(),
+        Command::new("clear - clear the terminal screen", false, clear::clear_callback),
     );
     cmds.register(
         "cp".to_string(),
