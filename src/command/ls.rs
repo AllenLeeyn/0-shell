@@ -64,7 +64,7 @@ pub fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
                     }
                 }
 
-                rows.sort_by(|a, b| a.0.cmp(&b.0));
+                rows.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
 
                 if long {
                     let total_blocks: u64 = rows.iter().map(|(_, m)| metadata_blocks_1k(m)).sum();
