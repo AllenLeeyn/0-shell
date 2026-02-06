@@ -325,8 +325,7 @@ fn permission_suffix(path: &Path) -> &'static str {
     let has_acl = false;
 
     match (has_xattr, has_acl) {
-        (true, true) => "@+",
-        (true, false) => "@",
+        (true, true) | (true, false) => "@",
         (false, true) => "+",
         (false, false) => "",
     }
