@@ -622,14 +622,26 @@ History expansion can be controlled via shell options:
 
 **Disable history expansion:**
 
-```bash
+##### zsh
+```zsh
 setopt NO_BANG_HIST
+```
+
+##### bash
+```bash
+set +H
 ```
 
 **Enable history expansion:**
 
-```bash
+##### zsh
+```zsh
 setopt BANG_HIST
+```
+
+##### bash
+```bash
+set -H
 ```
 
 **Check current status:**
@@ -751,8 +763,12 @@ This project is part of an educational exercise to build a minimal shell from sc
 ```
 
 #### Tasklist
-- [ ] add handling of ! (Sergei)
-- [ ] add proper formatting for ls (Gigi)
-- [ ] add ls -laF to list similar to bash (Allen)
+- [o] add handling of ! (Sergei)
+- [o] add proper formatting for ls (Gigi)
+- [o] add ls -laF to list similar to bash (Allen)
+- [o] add command history
+- [ ] add clear command (Sergei)
+- [ ] normalize ordering with ls. currently based on ascii values (Gigi)
+- [ ] fix inconsistent xattr (Allen)
 ```
 
