@@ -68,7 +68,7 @@ pub fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
                     }
                 }
 
-                rows.sort_by(|a, b| a.0.cmp(&b.0));
+                rows.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
 
                 let output = if long {
                     ls_long(path_str, &rows, classify)
