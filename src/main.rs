@@ -8,12 +8,13 @@ use command_call::{parse_line, unclosed_quote_prompt};
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 use std::env;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
 fn main() -> io::Result<()> {
     let mut stdout = io::stdout();
     let mut stderr = io::stderr();
+    let stderr_is_tty = stderr.is_terminal();
     let cmds = command_list();
 
     // Initialize rustyline editor with history support
@@ -49,25 +50,37 @@ fn main() -> io::Result<()> {
             if result.should_exit {
                 return Ok(());
             }
-            write_command_result(&mut stdout, &mut stderr, &result)?;
+            write_command_result(&mut stdout, &mut stderr, &result, stderr_is_tty)?;
         }
     }
 
     Ok(())
 }
 
+/// ANSI escape codes for error output (red text, reset).
+const ANSI_RED: &[u8] = b"\x1b[31m";
+const ANSI_RESET: &[u8] = b"\x1b[0m";
+
 /// Writes a command's stdout and stderr to the given writers.
+/// When stderr is a TTY, error output is colored red.
 fn write_command_result(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
     result: &command::CommandResult,
+    stderr_is_tty: bool,
 ) -> io::Result<()> {
     if !result.stdout.is_empty() {
         stdout.write_all(result.stdout.as_bytes())?;
         stdout.flush()?;
     }
     if !result.stderr.is_empty() {
+        if stderr_is_tty {
+            stderr.write_all(ANSI_RED)?;
+        }
         stderr.write_all(result.stderr.as_bytes())?;
+        if stderr_is_tty {
+            stderr.write_all(ANSI_RESET)?;
+        }
         stderr.write_all(b"\n")?;
         stderr.flush()?;
     }
