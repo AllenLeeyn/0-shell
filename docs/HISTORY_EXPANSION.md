@@ -81,12 +81,12 @@ History expansion can be controlled via shell options:
 **Disable history expansion:**
 
 - **zsh:** `setopt NO_BANG_HIST`
-- **bash:** `set +H`
+- **bash / 0-shell:** `set +H`
 
 **Enable history expansion:**
 
 - **zsh:** `setopt BANG_HIST`
-- **bash:** `set -H`
+- **bash / 0-shell:** `set -H`
 
 **Check current status:**
 
@@ -138,11 +138,12 @@ echo $-
 
 ## Implementation Status
 
-History expansion is currently **not implemented** in 0-shell. When implemented, it would require:
+A **simple subset** of history expansion is implemented in 0-shell:
 
-- Maintaining a command history buffer
-- Parsing `!` sequences before command execution
-- Resolving history references to actual command strings
-- Handling edge cases (empty history, invalid references, etc.)
+- **Implemented:** `!!` (previous command), `!n` (command number n, 1-based), `!-n` / `!+n` (n commands ago / 1-based), and `set -H` / `set +H` to enable/disable expansion (default: on).
+- **Respected:** No expansion inside single quotes; backslash before `!` prevents expansion.
+- **Not implemented:** `!string`, `!?string`, `^old^new^`, word designators (`:n`, `:$`, etc.), `!#`.
+
+The shell uses the same history buffer as the line editor (rustyline). Expansion runs after reading a complete line and before parsing; the expanded line is what gets executed and added to history.
 
 **Note:** History expansion is a powerful but potentially dangerous feature. In production shells, it's often disabled by default in non-interactive shells and can be controlled via shell options (e.g., `set +H` to disable in bash).
