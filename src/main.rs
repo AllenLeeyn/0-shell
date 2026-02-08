@@ -133,9 +133,11 @@ fn read_line_with_history(
         let line = match rl.readline(current_prompt) {
             Ok(line) => line,
             Err(ReadlineError::Interrupted) => {
-                // Ctrl+C - clear current input and start fresh
+                // Ctrl+C - reset state and show new prompt (do not exit shell)
                 raw_input.clear();
                 current_prompt = prompt;
+                let _ = std::io::stdout().write_all(b"\n");
+                let _ = std::io::stdout().flush();
                 continue;
             }
             Err(ReadlineError::Eof) => {

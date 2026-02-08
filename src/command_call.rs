@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 
+use crate::quote_state::QuoteState;
+
 /// A parsed command: name, flags, and args (one `;`-separated segment).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandCall {
@@ -16,43 +18,6 @@ pub struct CommandCall {
     /// Positional arguments for the command (e.g., file paths, text).
     pub args: Vec<String>,
 }
-
-/// Tracks quote/escape state for tokenization and unclosed-quote detection.
-#[derive(Default)]
-struct QuoteState {
-    in_single_quote: bool,
-    in_double_quote: bool,
-    escaped: bool,
-}
-
-impl QuoteState {
-    fn advance(&mut self, c: char) {
-        if self.escaped {
-            self.escaped = false;
-            return;
-        }
-        if c == '\\' && !self.in_single_quote {
-            self.escaped = true;
-            return;
-        }
-        if c == '\'' && !self.in_double_quote {
-            self.in_single_quote = !self.in_single_quote;
-        } else if c == '"' && !self.in_single_quote {
-            self.in_double_quote = !self.in_double_quote;
-        }
-    }
-
-    fn unclosed_prompt(&self) -> Option<&'static str> {
-        if self.in_double_quote || self.in_single_quote {
-            Some(CONTINUATION_PROMPT)
-        } else {
-            None
-        }
-    }
-}
-
-/// Continuation prompt when input has unclosed quote (bash PS2 style: just `> `).
-const CONTINUATION_PROMPT: &str = "> ";
 
 /// Parses a line of input into a sequence of command calls.
 ///
