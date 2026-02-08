@@ -7,6 +7,7 @@ use command::command_list;
 use command_call::{parse_line, unclosed_quote_prompt};
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
+use std::collections::HashMap;
 use std::env;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
@@ -16,6 +17,9 @@ fn main() -> io::Result<()> {
     let mut stderr = io::stderr();
     let stderr_is_tty = stderr.is_terminal();
     let cmds = command_list();
+
+    // Global shell environment (initialized from process env)
+    let mut env: HashMap<String, String> = std::env::vars().collect();
 
     // Initialize rustyline editor with history support
     let mut rl = match DefaultEditor::new() {
@@ -48,7 +52,11 @@ fn main() -> io::Result<()> {
             }
         }
 
-        for call in parse_line(&raw_input) {
+        for call in parse_line(&raw_input, &env) {
+            if call.name == "export" {
+                do_export(&mut env, &call.args);
+                continue;
+            }
             let result = cmds.execute(call.name, call.flags, call.args);
             if result.should_exit {
                 return Ok(());
@@ -58,6 +66,28 @@ fn main() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+/// Handles `export [VAR=value | VAR] ...`: updates shell env and process env.
+/// - `VAR=value`: set VAR in shell env and process env.
+/// - `VAR`: ensure VAR is in process env (value from shell env or process env).
+fn do_export(env: &mut HashMap<String, String>, args: &[String]) {
+    for arg in args {
+        if let Some((name, value)) = arg.split_once('=') {
+            let name = name.to_string();
+            let value = value.to_string();
+            env.insert(name.clone(), value.clone());
+            let _ = env::set_var(&name, &value);
+        } else if !arg.is_empty() {
+            let name = arg.clone();
+            let value = env
+                .get(&name)
+                .cloned()
+                .unwrap_or_else(|_| env::var(&name).unwrap_or_default());
+            env.insert(name.clone(), value.clone());
+            let _ = env::set_var(&name, &value);
+        }
+    }
 }
 
 /// ANSI escape codes for error output (red text, reset).

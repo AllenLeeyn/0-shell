@@ -1,7 +1,9 @@
 //! Line parsing and tokenization for 0-shell.
 //!
 //! Handles semicolon-separated commands, quoted strings, backslash escapes,
-//! and separation of flags from positional arguments.
+//! environment variable expansion (`$VAR`, `${VAR}`), and separation of flags from args.
+
+use std::collections::HashMap;
 
 /// A parsed command: name, flags, and args (one `;`-separated segment).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,20 +56,20 @@ const CONTINUATION_PROMPT: &str = "> ";
 
 /// Parses a line of input into a sequence of command calls.
 ///
-/// Handles: command chaining with `;`, tokenization (quotes/escapes), and separation of flags vs args.
-pub fn parse_line(input: &str) -> Vec<CommandCall> {
+/// Handles: command chaining with `;`, tokenization (quotes/escapes, env expansion), and separation of flags vs args.
+pub fn parse_line(input: &str, env: &HashMap<String, String>) -> Vec<CommandCall> {
     input
         .split(';')
-        .filter_map(|chunk| parse_chunk(chunk.trim()))
+        .filter_map(|chunk| parse_chunk(chunk.trim(), env))
         .collect()
 }
 
 /// Parses one semicolon-separated segment into a single command call, or `None` if empty.
-fn parse_chunk(chunk: &str) -> Option<CommandCall> {
+fn parse_chunk(chunk: &str, env: &HashMap<String, String>) -> Option<CommandCall> {
     if chunk.is_empty() {
         return None;
     }
-    let mut tokens = tokenize(chunk);
+    let mut tokens = tokenize(chunk, env);
     if tokens.is_empty() {
         return None;
     }
@@ -103,16 +105,18 @@ fn separate_flags_from_args(tokens: Vec<String>) -> (Vec<String>, Vec<String>) {
 /// Tokenizes a raw command string into individual arguments.
 ///
 /// This implementation supports:
-/// - Single quotes (`'`): Everything inside is treated literally.
-/// - Double quotes (`"`): Supports backslash escaping for `"`, `\`, and `$`.
+/// - Single quotes (`'`): Everything inside is treated literally (no expansion).
+/// - Double quotes (`"`): Supports backslash escaping for `"`, `\`, and `$`; `$VAR` is expanded.
 /// - Backslash escapes (`\`): Outside of quotes, escapes any following character.
+/// - Environment variables: `$VAR` and `${VAR}` expanded (empty if unset); not expanded inside single quotes.
 /// - Whitespace: Separates tokens unless escaped or quoted.
-pub fn tokenize(input: &str) -> Vec<String> {
+pub fn tokenize(input: &str, env: &HashMap<String, String>) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut state = QuoteState::default();
+    let mut chars = input.chars().peekable();
 
-    for c in input.chars() {
+    while let Some(c) = chars.next() {
         if state.escaped {
             current.push_str(&handle_escape(c, state.in_double_quote));
             state.escaped = false;
@@ -122,6 +126,10 @@ pub fn tokenize(input: &str) -> Vec<String> {
         state.advance(c);
 
         match c {
+            '$' if !state.in_single_quote => {
+                let name = read_var_name(&mut chars);
+                current.push_str(get_env_var(env, &name));
+            }
             '\\' if !state.in_single_quote => { /* advance() set escaped; don't push \ */ }
             '\'' if state.in_double_quote => current.push(c), // literal ' inside "..."
             '"' if state.in_single_quote => current.push(c),  // literal " inside '...'
@@ -141,6 +149,41 @@ pub fn tokenize(input: &str) -> Vec<String> {
     }
 
     tokens
+}
+
+/// Returns the value of an environment variable, or the empty string if unset.
+fn get_env_var(env: &HashMap<String, String>, name: &str) -> &str {
+    env.get(name).map(String::as_str).unwrap_or("")
+}
+
+/// Reads a variable name after `$`: either `${name}` or `name` (alphanumeric + underscore).
+/// Variable names cannot contain quotes or backslashes, so we don't need to update `QuoteState`.
+fn read_var_name(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+    let mut name = String::new();
+    match chars.peek().copied() {
+        Some('{') => {
+            chars.next();
+            while let Some(c) = chars.next() {
+                if c == '}' {
+                    break;
+                }
+                name.push(c);
+            }
+        }
+        Some(c) if c.is_alphabetic() || c == '_' => {
+            name.push(c);
+            chars.next();
+            while let Some(&c) = chars.peek() {
+                if !c.is_alphanumeric() && c != '_' {
+                    break;
+                }
+                chars.next();
+                name.push(c);
+            }
+        }
+        _ => {}
+    }
+    name
 }
 
 /// Returns the continuation prompt if the input has an unclosed quote, otherwise `None`.
@@ -174,36 +217,64 @@ fn handle_escape(c: char, in_double_quote: bool) -> String {
 mod tests {
     use super::*;
 
+    fn empty_env() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
     #[test]
     fn test_tokenize_simple() {
-        let tokens = tokenize("ls -la /home");
+        let tokens = tokenize("ls -la /home", &empty_env());
         assert_eq!(tokens, vec!["ls", "-la", "/home"]);
     }
 
     #[test]
     fn test_tokenize_quotes() {
-        let tokens = tokenize("echo \"hello world\" 'single quote'");
+        let tokens = tokenize("echo \"hello world\" 'single quote'", &empty_env());
         assert_eq!(tokens, vec!["echo", "hello world", "single quote"]);
     }
 
     #[test]
     fn test_tokenize_quote_inside_quote() {
         // Single quote inside double quotes is literal (bash behavior)
-        let tokens = tokenize("echo \"'something\"");
+        let tokens = tokenize("echo \"'something\"", &empty_env());
         assert_eq!(tokens, vec!["echo", "'something"]);
-        let tokens = tokenize("echo '\"double\"'");
+        let tokens = tokenize("echo '\"double\"'", &empty_env());
         assert_eq!(tokens, vec!["echo", "\"double\""]);
     }
 
     #[test]
     fn test_tokenize_escapes() {
-        let tokens = tokenize("echo \\\"hello\\ world\\\"");
+        let tokens = tokenize("echo \\\"hello\\ world\\\"", &empty_env());
         assert_eq!(tokens, vec!["echo", "\"hello world\""]);
     }
 
     #[test]
+    fn test_tokenize_env_expansion() {
+        let mut env = HashMap::new();
+        env.insert("HOME".to_string(), "/home/user".to_string());
+        env.insert("X".to_string(), "val".to_string());
+        assert_eq!(tokenize("echo $HOME", &env), vec!["echo", "/home/user"]);
+        assert_eq!(tokenize("echo ${HOME}", &env), vec!["echo", "/home/user"]);
+        assert_eq!(tokenize("echo a$X b", &env), vec!["echo", "aval", "b"]);
+    }
+
+    #[test]
+    fn test_tokenize_env_no_expand_single_quote() {
+        let mut env = HashMap::new();
+        env.insert("HOME".to_string(), "/home/user".to_string());
+        let tokens = tokenize("echo '$HOME'", &env);
+        assert_eq!(tokens, vec!["echo", "$HOME"]);
+    }
+
+    #[test]
+    fn test_tokenize_env_unset_empty() {
+        let tokens = tokenize("echo $MISSING", &empty_env());
+        assert_eq!(tokens, vec!["echo", ""]);
+    }
+
+    #[test]
     fn test_parse_line_chaining() {
-        let calls = parse_line("ls -l; echo hi");
+        let calls = parse_line("ls -l; echo hi", &empty_env());
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].name, "ls");
         assert_eq!(calls[0].flags, vec!["-l"]);
@@ -213,14 +284,14 @@ mod tests {
 
     #[test]
     fn test_parse_line_flags_expansion() {
-        let calls = parse_line("ls -la /tmp");
+        let calls = parse_line("ls -la /tmp", &empty_env());
         assert_eq!(calls[0].flags, vec!["-l", "-a"]);
         assert_eq!(calls[0].args, vec!["/tmp"]);
     }
 
     #[test]
     fn test_parse_line_long_flags() {
-        let calls = parse_line("ls --all /tmp");
+        let calls = parse_line("ls --all /tmp", &empty_env());
         assert_eq!(calls[0].flags, vec!["--all"]);
     }
 

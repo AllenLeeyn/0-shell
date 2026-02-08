@@ -1,10 +1,12 @@
 //! Command registry and shared types for 0-shell built-in commands.
+use std::collections::HashMap;
 
 mod cat;
 mod cd;
 mod clear;
 mod cp;
 mod echo;
+mod export;
 mod exit;
 mod ls;
 mod mkdir;
@@ -78,13 +80,13 @@ impl Command {
 
 /// Collection of registered commands.
 pub struct CommandList {
-    cmds: std::collections::HashMap<String, Command>,
+    cmds: HashMap<String, Command>,
 }
 
 impl CommandList {
     pub fn new() -> Self {
         Self {
-            cmds: std::collections::HashMap::new(),
+            cmds: HashMap::new(),
         }
     }
 
@@ -138,6 +140,14 @@ pub fn command_list() -> CommandList {
     cmds.register(
         "exit".to_string(),
         Command::new("exit - cause the shell to exit", false, exit::exit_callback),
+    );
+    cmds.register(
+        "export".to_string(),
+        Command::new(
+            "export [VAR=value | VAR]... - set or export environment variables",
+            false,
+            export::export_callback,
+        ),
     );
     cmds.register(
         "echo".to_string(),
