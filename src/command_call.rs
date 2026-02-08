@@ -56,7 +56,10 @@ const CONTINUATION_PROMPT: &str = "> ";
 ///
 /// Handles: command chaining with `;`, tokenization (quotes/escapes), and separation of flags vs args.
 pub fn parse_line(input: &str) -> Vec<CommandCall> {
-    input.split(';').filter_map(|chunk| parse_chunk(chunk.trim())).collect()
+    input
+        .split(';')
+        .filter_map(|chunk| parse_chunk(chunk.trim()))
+        .collect()
 }
 
 /// Parses one semicolon-separated segment into a single command call, or `None` if empty.

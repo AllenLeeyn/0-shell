@@ -5,8 +5,8 @@
 
 use std::fs;
 
-use super::util;
 use super::CommandResult;
+use super::util;
 
 pub fn mkdir_callback(flags: Vec<String>, args: Vec<String>) -> CommandResult {
     let parents = flags.iter().any(|f| f == "-p" || f == "--parents");

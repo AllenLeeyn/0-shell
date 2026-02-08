@@ -1,7 +1,7 @@
 //! `clear` - clear the terminal screen.
 
-use std::io::{self, Write};
 use super::CommandResult;
+use std::io::{self, Write};
 
 pub fn clear_callback(_flags: Vec<String>, _args: Vec<String>) -> CommandResult {
     // Write ANSI escape sequence directly to stdout for immediate effect
@@ -12,7 +12,7 @@ pub fn clear_callback(_flags: Vec<String>, _args: Vec<String>) -> CommandResult 
     let mut stdout = io::stdout();
     let _ = write!(stdout, "\x1bc");
     let _ = stdout.flush();
-    
+
     // Return empty result since we wrote directly
     CommandResult::new()
 }

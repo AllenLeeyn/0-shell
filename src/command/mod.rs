@@ -181,7 +181,11 @@ pub fn command_list() -> CommandList {
     );
     cmds.register(
         "clear".to_string(),
-        Command::new("clear - clear the terminal screen", false, clear::clear_callback),
+        Command::new(
+            "clear - clear the terminal screen",
+            false,
+            clear::clear_callback,
+        ),
     );
     cmds.register(
         "cp".to_string(),

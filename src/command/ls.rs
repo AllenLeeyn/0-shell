@@ -14,8 +14,8 @@ use xattr;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-use super::util;
 use super::CommandResult;
+use super::util;
 
 pub fn ls_callback(flags: Vec<String>, mut args: Vec<String>) -> CommandResult {
     let all = flags.iter().any(|f| f == "-a");

@@ -6,8 +6,8 @@
 use std::fs;
 use std::path::Path;
 
-use super::util::{self, dest_under_src, is_same_path};
 use super::CommandResult;
+use super::util::{self, dest_under_src, is_same_path};
 
 const RECURSIVE_FLAGS: &[&str] = &["-r", "-R", "--recursive"];
 
@@ -25,24 +25,34 @@ pub fn cp_callback(flags: Vec<String>, args: Vec<String>) -> CommandResult {
     let dest_str = &destination[0];
 
     if sources.len() > 1 && (!dest_path.exists() || !dest_path.is_dir()) {
-        return CommandResult::with_stderr(format!(
-            "cp: target '{}' is not a directory",
-            dest_str
-        ));
+        return CommandResult::with_stderr(format!("cp: target '{}' is not a directory", dest_str));
     }
 
     for source_str in sources {
         let src_path = Path::new(source_str);
         if !src_path.exists() {
-            util::append_stderr(&mut result, &format!("cp: {}: No such file or directory", source_str));
+            util::append_stderr(
+                &mut result,
+                &format!("cp: {}: No such file or directory", source_str),
+            );
             continue;
         }
         if src_path.is_dir() {
             if !recursive {
-                util::append_stderr(&mut result, &format!("cp: omitting directory '{}'", source_str));
+                util::append_stderr(
+                    &mut result,
+                    &format!("cp: omitting directory '{}'", source_str),
+                );
                 continue;
             }
-            cp_recursive(&mut result, src_path, dest_path, source_str, dest_str, sources.len() == 1);
+            cp_recursive(
+                &mut result,
+                src_path,
+                dest_path,
+                source_str,
+                dest_str,
+                sources.len() == 1,
+            );
         } else {
             cp_std(&mut result, src_path, dest_path, source_str);
         }
@@ -52,12 +62,7 @@ pub fn cp_callback(flags: Vec<String>, args: Vec<String>) -> CommandResult {
 }
 
 /// Copies a single file to the destination (or into the destination directory).
-fn cp_std(
-    result: &mut CommandResult,
-    src_path: &Path,
-    dest_path: &Path,
-    source_str: &str,
-) {
+fn cp_std(result: &mut CommandResult, src_path: &Path, dest_path: &Path, source_str: &str) {
     let final_dest = match util::resolve_destination(src_path, dest_path) {
         Ok(d) => d,
         Err(e) => {
@@ -89,7 +94,10 @@ fn cp_recursive(
     } else if single_source {
         dest_path.to_path_buf()
     } else {
-        util::append_stderr(result, &format!("cp: target '{}' is not a directory", dest_str));
+        util::append_stderr(
+            result,
+            &format!("cp: target '{}' is not a directory", dest_str),
+        );
         return;
     };
     if is_same_path(src_path, &final_dest) {

@@ -5,8 +5,8 @@ mod command_call;
 
 use command::command_list;
 use command_call::{parse_line, unclosed_quote_prompt};
-use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
+use rustyline::error::ReadlineError;
 use std::env;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
@@ -22,13 +22,16 @@ fn main() -> io::Result<()> {
         Ok(editor) => editor,
         Err(e) => {
             eprintln!("Failed to initialize line editor: {}", e);
-            return Err(io::Error::new(io::ErrorKind::Other, "Failed to initialize editor"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Failed to initialize editor",
+            ));
         }
     };
 
     loop {
         let prompt = get_prompt();
-        
+
         let raw_input = match read_line_with_history(&mut rl, &prompt) {
             Ok(Some(input)) => input,
             Ok(None) => break, // EOF (Ctrl+D)
@@ -95,7 +98,7 @@ fn read_line_with_history(
 ) -> Result<Option<String>, ReadlineError> {
     let mut raw_input = String::new();
     let mut current_prompt = prompt;
-    
+
     loop {
         let line = match rl.readline(current_prompt) {
             Ok(line) => line,
@@ -115,13 +118,13 @@ fn read_line_with_history(
             }
             Err(e) => return Err(e),
         };
-        
+
         // Append the line to our accumulated input
         if !raw_input.is_empty() {
             raw_input.push('\n');
         }
         raw_input.push_str(&line);
-        
+
         // Check if quotes are balanced
         match unclosed_quote_prompt(&raw_input) {
             None => {

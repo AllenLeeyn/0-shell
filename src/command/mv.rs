@@ -3,8 +3,8 @@
 use std::fs;
 use std::path::Path;
 
-use super::util::{self, resolve_destination};
 use super::CommandResult;
+use super::util::{self, resolve_destination};
 
 pub fn mv_callback(_flags: Vec<String>, args: Vec<String>) -> CommandResult {
     if args.len() < 2 {
@@ -31,7 +31,10 @@ pub fn mv_callback(_flags: Vec<String>, args: Vec<String>) -> CommandResult {
                 if let Err(e) = fs::rename(src_path, final_dest) {
                     util::append_stderr(
                         &mut result,
-                        &format!("mv: cannot move '{}' to '{}': {}", source_str, destination[0], e),
+                        &format!(
+                            "mv: cannot move '{}' to '{}': {}",
+                            source_str, destination[0], e
+                        ),
                     );
                 }
             }

@@ -5,8 +5,8 @@
 use std::fs;
 use std::io;
 
-use super::util;
 use super::CommandResult;
+use super::util;
 
 pub fn cat_callback(_flags: Vec<String>, args: Vec<String>) -> CommandResult {
     let mut result = CommandResult::new();

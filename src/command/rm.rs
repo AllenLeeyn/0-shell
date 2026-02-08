@@ -3,8 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::util;
-use super::CommandResult;
+use super::{CommandResult, util};
 
 pub fn rm_callback(flags: Vec<String>, args: Vec<String>) -> CommandResult {
     let recursive = flags
