@@ -1,22 +1,24 @@
-//! Simple history expansion: `!!`, `!n`, and `!-n`.
+//! Simple history expansion: `!!`, `!n`, `!-n`, and `!+n`.
 //!
-//! Expansion is not performed inside single quotes or when `!` is escaped by backslash.
-//! Matches the behavior described in docs/HISTORY_EXPANSION.md.
+//! Not expanded inside single quotes or when `!` is escaped. See docs/HISTORY_EXPANSION.md.
 
 use crate::quote_state::QuoteState;
 
-/// Result of history expansion: either the expanded string or an error message.
+/// Result of history expansion: expanded string or a bash-style error message.
 pub type ExpandResult = Result<String, String>;
+
+// -----------------------------------------------------------------------------
+// Public API
+// -----------------------------------------------------------------------------
 
 /// Expands history references in `input` using direct access to history.
 ///
 /// - `!!` → previous command (last entry)
-/// - `!n` → command number n (1-based; e.g. `!1` is first entry)
-/// - `!-n` → the command n steps back (e.g. `!-1` is previous, `!-2` is two ago)
+/// - `!n` / `!+n` → command number n (1-based)
+/// - `!-n` → the command n steps back
 ///
-/// `history_len` is the number of entries; `get_entry(i)` returns the entry at index `i` (0-based), or `None` if out of range.
-/// History is not expanded inside single quotes. A backslash before `!` prevents expansion.
-/// If any reference is invalid (e.g. empty history, index out of range), returns `Err` with a message.
+/// `get_entry(i)` returns the entry at 0-based index `i`, or `None` if out of range.
+/// No expansion inside single quotes; backslash before `!` inhibits expansion.
 pub fn expand_history<'a, F>(input: &str, history_len: usize, get_entry: F) -> ExpandResult
 where
     F: Fn(usize) -> Option<&'a str>,
@@ -35,14 +37,13 @@ where
         state.advance(c);
 
         if c == '!' && state.should_expand_bang() {
-            let replacement = expand_one(&mut chars, history_len, &get_entry)?;
+            let replacement = parse_designator(&mut chars, history_len, &get_entry)?;
             out.push_str(&replacement);
             continue;
         }
 
         if c == '\\' && !state.in_single_quote {
-            // advance() set escaped; don't push backslash, next char will be literal
-            continue;
+            continue; // next char will be literal
         }
 
         out.push(c);
@@ -51,8 +52,12 @@ where
     Ok(out)
 }
 
-/// Parses one history designator after the leading `!` and returns the replacement text.
-fn expand_one<'a, F>(
+// -----------------------------------------------------------------------------
+// Designator parsing (!!, !n, !-n, !+n)
+// -----------------------------------------------------------------------------
+
+/// Parses one designator after the leading `!`; returns replacement text or error.
+fn parse_designator<'a, F>(
     chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
     history_len: usize,
     get_entry: &F,
@@ -64,56 +69,61 @@ where
         return Err("bash: !!: no previous command".to_string());
     }
 
-    // !!
     if chars.peek().copied() == Some('!') {
         chars.next();
-        let s = get_entry(history_len - 1).ok_or("bash: !!: no previous command")?;
-        return Ok(s.to_string());
+        return get_entry(history_len - 1)
+            .map(|s| s.to_string())
+            .ok_or_else(|| "bash: !!: no previous command".to_string());
     }
 
-    // !-n, !+n, !n (optional sign then digits)
     if matches!(chars.peek().copied(), Some('-') | Some('+') | Some(c) if c.is_ascii_digit()) {
         let n = read_number(chars)?;
         if n == 0 {
             return Err("bash: !0: command not found".to_string());
         }
-        let (idx, err_label): (usize, String) = if n < 0 {
-            let abs_n = n.unsigned_abs() as usize;
-            if abs_n > history_len {
-                return Err(format!(
-                    "bash: !-{}: event not found (history has {} entries)",
-                    abs_n, history_len
-                ));
-            }
-            (history_len - abs_n, format!("-{}", abs_n))
-        } else {
-            if n as usize > history_len {
-                return Err(format!(
-                    "bash: !{}: event not found (history has {} entries)",
-                    n, history_len
-                ));
-            }
-            ((n as usize) - 1, n.to_string())
-        };
-        let s = get_entry(idx).ok_or_else(|| format!("bash: !{}: event not found", err_label))?;
-        return Ok(s.to_string());
+        let (idx, err_label) = resolve_index(history_len, n)?;
+        return get_entry(idx)
+            .map(|s| s.to_string())
+            .ok_or_else(|| format!("bash: !{}: event not found", err_label));
     }
 
-    // No other designators (e.g. !string) for this simple implementation
     Err("bash: !: event not found".to_string())
 }
 
-/// Parses an optional leading `-` or `+`, then one or more ASCII digits.
-/// Returns a signed value: negative for `-n`, positive for `n` or `+n`.
+/// Converts a signed history offset to a 0-based index and error label. `n < 0` ⇒ !-n, `n > 0` ⇒ !n/!+n.
+fn resolve_index(history_len: usize, n: i64) -> Result<(usize, String), String> {
+    if n < 0 {
+        let abs_n = n.unsigned_abs() as usize;
+        if abs_n > history_len {
+            return Err(format!(
+                "bash: !-{}: event not found (history has {} entries)",
+                abs_n, history_len
+            ));
+        }
+        Ok((history_len - abs_n, format!("-{}", abs_n)))
+    } else {
+        let n = n as usize;
+        if n > history_len {
+            return Err(format!(
+                "bash: !{}: event not found (history has {} entries)",
+                n, history_len
+            ));
+        }
+        Ok((n - 1, n.to_string()))
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Number parsing (optional sign + digits)
+// -----------------------------------------------------------------------------
+
+/// Parses optional `-` or `+` then one or more ASCII digits. Returns signed value.
 fn read_number(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<i64, String> {
     let mut s = String::new();
     match chars.peek().copied() {
-        Some('-') => {
-            s.push(chars.next().unwrap());
-        }
+        Some('-') => s.push(chars.next().unwrap()),
         Some('+') => {
             chars.next();
-            // don't push '+' into s; we'll parse as positive
         }
         _ => {}
     }
@@ -123,9 +133,12 @@ fn read_number(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<i
     if s.is_empty() || s == "-" {
         return Err("bash: invalid history reference".to_string());
     }
-    s.parse::<i64>()
-        .map_err(|_| "bash: invalid history reference".to_string())
+    s.parse::<i64>().map_err(|_| "bash: invalid history reference".to_string())
 }
+
+// -----------------------------------------------------------------------------
+// Tests
+// -----------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -176,8 +189,13 @@ mod tests {
     }
 
     #[test]
+    fn test_escaped_bang() {
+        let h = hist(&["echo previous"]);
+        assert_eq!(expand_with(&h, r"\!!").unwrap(), "!!");
+    }
+
+    #[test]
     fn test_empty_history() {
-        let h: Vec<String> = vec![];
         assert!(expand_history("!!", 0, |_| None).is_err());
     }
 
@@ -186,11 +204,5 @@ mod tests {
         let h = hist(&["echo one"]);
         assert!(expand_with(&h, "!2").is_err());
         assert!(expand_with(&h, "!-2").is_err());
-    }
-
-    #[test]
-    fn test_escaped_bang() {
-        let h = hist(&["echo previous"]);
-        assert_eq!(expand_with(&h, r"\!!").unwrap(), "!!");
     }
 }
