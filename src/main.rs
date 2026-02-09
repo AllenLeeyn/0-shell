@@ -11,6 +11,13 @@ use std::env;
 use std::io::{self, Write};
 use std::path::Path;
 
+/// ANSI escape codes for terminal colors.
+mod ansi {
+    pub const RESET: &str = "\x1b[0m";
+    pub const RED: &str = "\x1b[31m";
+    pub const CYAN: &str = "\x1b[36m";
+}
+
 fn main() -> io::Result<()> {
     let mut stdout = io::stdout();
     let mut stderr = io::stderr();
@@ -56,7 +63,7 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-/// Writes a command's stdout and stderr to the given writers.
+/// Writes a command's stdout and stderr to the given writers. Stderr is colored red.
 fn write_command_result(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
@@ -67,7 +74,9 @@ fn write_command_result(
         stdout.flush()?;
     }
     if !result.stderr.is_empty() {
+        stderr.write_all(ansi::RED.as_bytes())?;
         stderr.write_all(result.stderr.as_bytes())?;
+        stderr.write_all(ansi::RESET.as_bytes())?;
         stderr.write_all(b"\n")?;
         stderr.flush()?;
     }
@@ -123,18 +132,18 @@ fn read_line_with_history(
     }
 }
 
-/// Shell prompt with current directory; home is abbreviated as `~`.
+/// Shell prompt with current directory (cyan); home is abbreviated as `~`.
 fn get_prompt() -> String {
     let cwd = env::current_dir().unwrap_or_default();
     let home = env::var("HOME").unwrap_or_else(|_| String::new());
 
     if home.is_empty() {
-        return format!("{} $ ", cwd.display());
+        return format!("{}{}{} $ ", ansi::CYAN, cwd.display(), ansi::RESET);
     }
 
     let home_path = Path::new(&home);
     match cwd.strip_prefix(home_path) {
-        Ok(suffix) => format!("~{} $ ", suffix.display()),
-        Err(_) => format!("{} $ ", cwd.display()),
+        Ok(suffix) => format!("{}{}{}{} $ ", ansi::CYAN, "~", suffix.display(), ansi::RESET),
+        Err(_) => format!("{}{}{} $ ", ansi::CYAN, cwd.display(), ansi::RESET),
     }
 }
