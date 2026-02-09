@@ -21,20 +21,16 @@ pub struct CommandCall {
 
 /// Parses a line of input into a sequence of command calls.
 ///
-/// Handles: command chaining with `;`, tokenization (quotes/escapes, env expansion), and separation of flags vs args.
+/// Handles: command chaining with `;` (quote-aware), tokenization (quotes/escapes, env expansion), and separation of flags vs args.
 pub fn parse_line(input: &str, env: &HashMap<String, String>) -> Vec<CommandCall> {
-    input
-        .split(';')
-        .filter_map(|chunk| parse_chunk(chunk.trim(), env))
+    tokenize(input, env)
+        .into_iter()
+        .filter_map(tokens_to_command)
         .collect()
 }
 
-/// Parses one semicolon-separated segment into a single command call, or `None` if empty.
-fn parse_chunk(chunk: &str, env: &HashMap<String, String>) -> Option<CommandCall> {
-    if chunk.is_empty() {
-        return None;
-    }
-    let mut tokens = tokenize(chunk, env);
+/// Builds a single `CommandCall` from a group of tokens, or `None` if the group is empty.
+fn tokens_to_command(mut tokens: Vec<String>) -> Option<CommandCall> {
     if tokens.is_empty() {
         return None;
     }
@@ -67,19 +63,26 @@ fn separate_flags_from_args(tokens: Vec<String>) -> (Vec<String>, Vec<String>) {
     (flags, args)
 }
 
-/// Tokenizes a raw command string into individual arguments.
+/// Tokenizes a line into groups of tokens, one group per command (split on `;` when not in quotes).
 ///
-/// This implementation supports:
-/// - Single quotes (`'`): Everything inside is treated literally (no expansion).
-/// - Double quotes (`"`): Supports backslash escaping for `"`, `\`, and `$`; `$VAR` is expanded.
-/// - Backslash escapes (`\`): Outside of quotes, escapes any following character.
-/// - Environment variables: `$VAR` and `${VAR}` expanded (empty if unset); not expanded inside single quotes.
-/// - Whitespace: Separates tokens unless escaped or quoted.
-pub fn tokenize(input: &str, env: &HashMap<String, String>) -> Vec<String> {
-    let mut tokens = Vec::new();
+/// Supports:
+/// - Single quotes (`'`): Everything inside is literal (no expansion).
+/// - Double quotes (`"`): Backslash escape for `"`, `\`, `$`; `$VAR` expanded.
+/// - Backslash escapes (`\`): Outside quotes, next character is literal.
+/// - Environment variables: `$VAR` and `${VAR}` (empty if unset); not expanded inside single quotes.
+/// - Semicolon: Starts a new command group when not inside quotes and not escaped.
+pub fn tokenize(input: &str, env: &HashMap<String, String>) -> Vec<Vec<String>> {
+    let mut groups = Vec::new();
+    let mut current_group = Vec::new();
     let mut current = String::new();
     let mut state = QuoteState::default();
     let mut chars = input.chars().peekable();
+
+    let mut flush_word = |group: &mut Vec<String>, word: &mut String| {
+        if !word.is_empty() {
+            group.push(std::mem::take(word));
+        }
+    };
 
     while let Some(c) = chars.next() {
         if state.escaped {
@@ -100,20 +103,20 @@ pub fn tokenize(input: &str, env: &HashMap<String, String>) -> Vec<String> {
             '"' if state.in_single_quote => current.push(c),  // literal " inside '...'
             '\'' | '"' => { /* delimiter; already toggled in advance */ }
             c if c.is_whitespace() && !state.in_single_quote && !state.in_double_quote => {
-                if !current.is_empty() {
-                    tokens.push(current.clone());
-                    current.clear();
-                }
+                flush_word(&mut current_group, &mut current);
+            }
+            ';' if !state.in_single_quote && !state.in_double_quote => {
+                flush_word(&mut current_group, &mut current);
+                groups.push(std::mem::take(&mut current_group));
             }
             _ => current.push(c),
         }
     }
 
-    if !current.is_empty() {
-        tokens.push(current);
-    }
+    flush_word(&mut current_group, &mut current);
+    groups.push(current_group);
 
-    tokens
+    groups
 }
 
 /// Returns the value of an environment variable, or the empty string if unset.
@@ -188,29 +191,28 @@ mod tests {
 
     #[test]
     fn test_tokenize_simple() {
-        let tokens = tokenize("ls -la /home", &empty_env());
-        assert_eq!(tokens, vec!["ls", "-la", "/home"]);
+        let groups = tokenize("ls -la /home", &empty_env());
+        assert_eq!(groups, vec![vec!["ls", "-la", "/home"]]);
     }
 
     #[test]
     fn test_tokenize_quotes() {
-        let tokens = tokenize("echo \"hello world\" 'single quote'", &empty_env());
-        assert_eq!(tokens, vec!["echo", "hello world", "single quote"]);
+        let groups = tokenize("echo \"hello world\" 'single quote'", &empty_env());
+        assert_eq!(groups, vec![vec!["echo", "hello world", "single quote"]]);
     }
 
     #[test]
     fn test_tokenize_quote_inside_quote() {
-        // Single quote inside double quotes is literal (bash behavior)
-        let tokens = tokenize("echo \"'something\"", &empty_env());
-        assert_eq!(tokens, vec!["echo", "'something"]);
-        let tokens = tokenize("echo '\"double\"'", &empty_env());
-        assert_eq!(tokens, vec!["echo", "\"double\""]);
+        let groups = tokenize("echo \"'something\"", &empty_env());
+        assert_eq!(groups, vec![vec!["echo", "'something"]]);
+        let groups = tokenize("echo '\"double\"'", &empty_env());
+        assert_eq!(groups, vec![vec!["echo", "\"double\""]]);
     }
 
     #[test]
     fn test_tokenize_escapes() {
-        let tokens = tokenize("echo \\\"hello\\ world\\\"", &empty_env());
-        assert_eq!(tokens, vec!["echo", "\"hello world\""]);
+        let groups = tokenize("echo \\\"hello\\ world\\\"", &empty_env());
+        assert_eq!(groups, vec![vec!["echo", "\"hello world\""]]);
     }
 
     #[test]
@@ -218,23 +220,39 @@ mod tests {
         let mut env = HashMap::new();
         env.insert("HOME".to_string(), "/home/user".to_string());
         env.insert("X".to_string(), "val".to_string());
-        assert_eq!(tokenize("echo $HOME", &env), vec!["echo", "/home/user"]);
-        assert_eq!(tokenize("echo ${HOME}", &env), vec!["echo", "/home/user"]);
-        assert_eq!(tokenize("echo a$X b", &env), vec!["echo", "aval", "b"]);
+        assert_eq!(tokenize("echo $HOME", &env), vec![vec!["echo", "/home/user"]]);
+        assert_eq!(tokenize("echo ${HOME}", &env), vec![vec!["echo", "/home/user"]]);
+        assert_eq!(tokenize("echo a$X b", &env), vec![vec!["echo", "aval", "b"]]);
     }
 
     #[test]
     fn test_tokenize_env_no_expand_single_quote() {
         let mut env = HashMap::new();
         env.insert("HOME".to_string(), "/home/user".to_string());
-        let tokens = tokenize("echo '$HOME'", &env);
-        assert_eq!(tokens, vec!["echo", "$HOME"]);
+        let groups = tokenize("echo '$HOME'", &env);
+        assert_eq!(groups, vec![vec!["echo", "$HOME"]]);
     }
 
     #[test]
     fn test_tokenize_env_unset_empty() {
-        let tokens = tokenize("echo $MISSING", &empty_env());
-        assert_eq!(tokens, vec!["echo", ""]);
+        let groups = tokenize("echo $MISSING", &empty_env());
+        assert_eq!(groups, vec![vec!["echo", ""]]);
+    }
+
+    #[test]
+    fn test_tokenize_semicolon_chaining() {
+        let groups = tokenize("ls -l; echo hi", &empty_env());
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0], vec!["ls", "-l"]);
+        assert_eq!(groups[1], vec!["echo", "hi"]);
+    }
+
+    #[test]
+    fn test_tokenize_semicolon_inside_quotes() {
+        let groups = tokenize("echo \"hello; world\"", &empty_env());
+        assert_eq!(groups, vec![vec!["echo", "hello; world"]]);
+        let groups = tokenize("echo 'a; b'", &empty_env());
+        assert_eq!(groups, vec![vec!["echo", "a; b"]]);
     }
 
     #[test]
@@ -258,6 +276,16 @@ mod tests {
     fn test_parse_line_long_flags() {
         let calls = parse_line("ls --all /tmp", &empty_env());
         assert_eq!(calls[0].flags, vec!["--all"]);
+    }
+
+    #[test]
+    fn test_parse_line_semicolon_inside_quotes() {
+        let calls = parse_line("echo \"hello; world\"", &empty_env());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].args, vec!["hello; world"]);
+        let calls = parse_line("echo 'a; b'", &empty_env());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].args, vec!["a; b"]);
     }
 
     #[test]
