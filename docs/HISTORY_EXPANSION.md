@@ -80,15 +80,17 @@ History expansion can be controlled via shell options:
 
 **Disable history expansion:**
 
-- **zsh:** `setopt NO_BANG_HIST`
-- **bash / 0-shell:** `set +H`
+- **zsh / 0-shell:** `setopt NO_BANG_HIST`
+- **bash:** `set +H`
 
 **Enable history expansion:**
 
-- **zsh:** `setopt BANG_HIST`
-- **bash / 0-shell:** `set -H`
+- **zsh / 0-shell:** `setopt BANG_HIST`
+- **bash:** `set -H`
 
-**Check current status:**
+**0-shell:** Use `setopt BANG_HIST` to enable and `setopt NO_BANG_HIST` to disable (same option names as zsh; we only look at the argument, not flags).
+
+**Check current status (bash):**
 
 ```bash
 set -o | grep histexpand
@@ -97,11 +99,11 @@ echo $-
 # Look for 'H' in the output (H = history expansion enabled)
 ```
 
-**Behavior when disabled:** When history expansion is disabled (`set +H`), the `!` character is treated as a literal character everywhere. All `!` characters are treated literally, and history references like `!!` will not be expanded.
+**Behavior when disabled:** When history expansion is disabled (`setopt NO_BANG_HIST` in 0-shell/zsh, or `set +H` in bash), the `!` character is treated as a literal character everywhere. All `!` characters are treated literally, and history references like `!!` will not be expanded.
 
-**Behavior when enabled (default in interactive bash):** History expansion is active, and `!!` references the previous command.
+**Behavior when enabled (default in 0-shell):** History expansion is active, and `!!` references the previous command.
 
-**Note:** In bash, history expansion is enabled by default in interactive shells but disabled in non-interactive shells (scripts). The `set +H` / `set -H` commands control this behavior.
+**Note:** In 0-shell, history expansion is on by default; use `setopt NO_BANG_HIST` to disable. In bash, `set +H` / `set -H` control this behavior.
 
 ## Common Use Cases
 

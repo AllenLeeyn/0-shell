@@ -42,8 +42,7 @@ fn tokens_to_command(mut tokens: Vec<String>) -> Option<CommandCall> {
 /// Separates command tokens into flags and positional arguments.
 ///
 /// Flags are tokens starting with `-`. Short flags (single `-` followed by multiple characters)
-/// are automatically expanded (e.g., `-al` -> `["-a", "-l"]`).
-/// Long flags (starting with `--`) are preserved as-is.
+/// are expanded (e.g. `-al` -> `["-a", "-l"]`). Long flags (starting with `--`) are preserved as-is.
 fn separate_flags_from_args(tokens: Vec<String>) -> (Vec<String>, Vec<String>) {
     let mut flags = Vec::new();
     let mut args = Vec::new();
@@ -96,7 +95,7 @@ pub fn tokenize(input: &str, env: &HashMap<String, String>) -> Vec<Vec<String>> 
         match c {
             '$' if !state.in_single_quote => {
                 let name = read_var_name(&mut chars);
-                current.push_str(get_env_var(env, &name));
+                current.push_str(&get_env_var(env, &name));
             }
             '\\' if !state.in_single_quote => { /* advance() set escaped; don't push \ */ }
             '\'' if state.in_double_quote => current.push(c), // literal ' inside "..."
@@ -120,8 +119,8 @@ pub fn tokenize(input: &str, env: &HashMap<String, String>) -> Vec<Vec<String>> 
 }
 
 /// Returns the value of an environment variable, or the empty string if unset.
-fn get_env_var(env: &HashMap<String, String>, name: &str) -> &str {
-    env.get(name).map(String::as_str).unwrap_or("")
+fn get_env_var(env: &HashMap<String, String>, name: &str) -> String {
+    env.get(name).cloned().unwrap_or_default()
 }
 
 /// Reads a variable name after `$`: either `${name}` or `name` (alphanumeric + underscore).
@@ -276,6 +275,22 @@ mod tests {
     fn test_parse_line_long_flags() {
         let calls = parse_line("ls --all /tmp", &empty_env());
         assert_eq!(calls[0].flags, vec!["--all"]);
+    }
+
+    #[test]
+    fn test_parse_line_setopt_no_bang_hist() {
+        let calls = parse_line("setopt NO_BANG_HIST", &empty_env());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "setopt");
+        assert!(calls[0].flags.is_empty());
+        assert_eq!(calls[0].args, vec!["NO_BANG_HIST"]);
+    }
+
+    #[test]
+    fn test_parse_line_setopt_bang_hist() {
+        let calls = parse_line("setopt BANG_HIST", &empty_env());
+        assert_eq!(calls[0].name, "setopt");
+        assert_eq!(calls[0].args, vec!["BANG_HIST"]);
     }
 
     #[test]

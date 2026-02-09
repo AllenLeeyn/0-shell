@@ -45,7 +45,7 @@ fn main() -> io::Result<()> {
             }
         };
 
-        let expanded = match expand_line(&raw_input, state.histexpand, &rl) {
+        let expanded = match expand_line(&raw_input, state.histexpand, &state.history_entries) {
             Ok(s) => s,
             Err(e) => {
                 let _ = write_error(&mut stderr, &e, stderr_is_tty);
@@ -56,6 +56,9 @@ fn main() -> io::Result<()> {
         if !expanded.trim().is_empty() {
             if let Err(e) = rl.add_history_entry(expanded.as_str()) {
                 let _ = write_error(&mut stderr, &format!("Warning: Failed to add to history: {}", e), stderr_is_tty);
+            } else {
+                // Store full line so !! and !n expand to the entire command (e.g. "ls -laF" not just "ls")
+                state.history_entries.push(expanded.clone());
             }
         }
 
@@ -70,8 +73,10 @@ fn main() -> io::Result<()> {
 /// Shell state shared across the REPL: environment and options.
 struct ShellState {
     env: HashMap<String, String>,
-    /// History expansion: true = `set -H`, false = `set +H`.
+    /// History expansion: true = `setopt BANG_HIST`, false = `setopt NO_BANG_HIST`.
     histexpand: bool,
+    /// Snapshot of history entries for expansion (!n, !!); kept in sync with rustyline history.
+    history_entries: Vec<String>,
 }
 
 impl ShellState {
@@ -79,6 +84,7 @@ impl ShellState {
         Self {
             env: env::vars().collect(),
             histexpand: true,
+            history_entries: Vec::new(),
         }
     }
 }
@@ -91,14 +97,11 @@ impl ShellState {
 fn expand_line(
     raw_input: &str,
     histexpand: bool,
-    rl: &DefaultEditor,
+    history_entries: &[String],
 ) -> Result<String, String> {
     if histexpand {
-        expand_history(
-            raw_input,
-            rl.history().len(),
-            |i| rl.history().get(i).map(String::as_str),
-        )
+        let len = history_entries.len();
+        expand_history(raw_input, len, |i| history_entries.get(i).map(String::as_str))
     } else {
         Ok(raw_input.to_string())
     }
@@ -168,7 +171,7 @@ fn get_prompt() -> String {
 // Command execution and builtins
 // -----------------------------------------------------------------------------
 
-/// Parses the line, runs builtins (export, set) or commands. Returns `true` if shell should exit.
+/// Parses the line, runs builtins (export, setopt) or commands. Returns `true` if shell should exit.
 fn execute_commands(
     line: &str,
     state: &mut ShellState,
@@ -182,8 +185,8 @@ fn execute_commands(
             do_export(&mut state.env, &call.args);
             continue;
         }
-        if call.name == "set" {
-            do_set(&mut state.histexpand, &call.flags);
+        if call.name == "setopt" {
+            do_setopt(&mut state.histexpand, &call.args);
             continue;
         }
         let result = cmds.execute(call.name, call.flags, call.args);
@@ -195,12 +198,12 @@ fn execute_commands(
     Ok(false)
 }
 
-/// `set [-H] [+H] ...`: -H enables history expansion, +H disables it.
-fn do_set(histexpand: &mut bool, flags: &[String]) {
-    for f in flags {
-        match f.as_str() {
-            "-H" => *histexpand = true,
-            "+H" => *histexpand = false,
+/// `setopt [OPTION] ...`: options like zsh. BANG_HIST enables history expansion, NO_BANG_HIST disables it.
+fn do_setopt(histexpand: &mut bool, args: &[String]) {
+    for opt in args {
+        match opt.as_str() {
+            "BANG_HIST" => *histexpand = true,
+            "NO_BANG_HIST" => *histexpand = false,
             _ => {}
         }
     }
@@ -213,15 +216,15 @@ fn do_export(env: &mut HashMap<String, String>, args: &[String]) {
             let name = name.to_string();
             let value = value.to_string();
             env.insert(name.clone(), value.clone());
-            let _ = env::set_var(&name, &value);
+            let _ = unsafe { env::set_var(&name, &value) };
         } else if !arg.is_empty() {
             let name = arg.clone();
             let value = env
                 .get(&name)
                 .cloned()
-                .unwrap_or_else(|_| env::var(&name).unwrap_or_default());
+                .unwrap_or_else(|| env::var(&name).unwrap_or_default());
             env.insert(name.clone(), value.clone());
-            let _ = env::set_var(&name, &value);
+            let _ = unsafe { env::set_var(&name, &value) };
         }
     }
 }

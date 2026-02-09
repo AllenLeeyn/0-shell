@@ -76,18 +76,18 @@ where
             .ok_or_else(|| "bash: !!: no previous command".to_string());
     }
 
-    if matches!(chars.peek().copied(), Some('-') | Some('+') | Some(c) if c.is_ascii_digit()) {
-        let n = read_number(chars)?;
-        if n == 0 {
-            return Err("bash: !0: command not found".to_string());
+    match read_number(chars) {
+        Ok(n) => {
+            if n == 0 {
+                return Err("bash: !0: command not found".to_string());
+            }
+            let (idx, err_label) = resolve_index(history_len, n)?;
+            get_entry(idx)
+                .map(|s| s.to_string())
+                .ok_or_else(|| format!("bash: !{}: event not found", err_label))
         }
-        let (idx, err_label) = resolve_index(history_len, n)?;
-        return get_entry(idx)
-            .map(|s| s.to_string())
-            .ok_or_else(|| format!("bash: !{}: event not found", err_label));
+        Err(_) => Err("bash: !: event not found".to_string()),
     }
-
-    Err("bash: !: event not found".to_string())
 }
 
 /// Converts a signed history offset to a 0-based index and error label. `n < 0` ⇒ !-n, `n > 0` ⇒ !n/!+n.
@@ -156,6 +156,16 @@ mod tests {
     fn test_double_bang() {
         let h = hist(&["echo first", "echo second"]);
         assert_eq!(expand_with(&h, "!!").unwrap(), "echo second");
+    }
+
+    /// !! must expand to the full previous line (including flags/args), not just the command name.
+    #[test]
+    fn test_double_bang_full_command_line() {
+        let h = hist(&["ls -laF"]);
+        assert_eq!(expand_with(&h, "echo !!").unwrap(), "echo ls -laF");
+        let h = hist(&["ls -laF", "pwd"]);
+        assert_eq!(expand_with(&h, "!!").unwrap(), "pwd");
+        assert_eq!(expand_with(&h, "run !!").unwrap(), "run pwd");
     }
 
     #[test]
