@@ -52,11 +52,36 @@ impl QuoteState {
 /// Continuation prompt when input has unclosed quote (bash PS2 style: just `> `).
 const CONTINUATION_PROMPT: &str = "> ";
 
+/// Splits on `;` only when not inside single/double quotes and not escaped.
+fn split_quoted_semicolons(input: &str) -> Vec<&str> {
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    let mut state = QuoteState::default();
+
+    for (i, c) in input.char_indices() {
+        if state.escaped {
+            state.advance(c);
+            continue;
+        }
+        if c == ';' && !state.in_single_quote && !state.in_double_quote {
+            chunks.push(&input[start..i]);
+            start = i + 1;
+        } else {
+            state.advance(c);
+        }
+    }
+    chunks.push(&input[start..]);
+    chunks
+}
+
 /// Parses a line of input into a sequence of command calls.
 ///
-/// Handles: command chaining with `;`, tokenization (quotes/escapes), and separation of flags vs args.
+/// Handles: command chaining with `;` (quote-aware), tokenization (quotes/escapes), and separation of flags vs args.
 pub fn parse_line(input: &str) -> Vec<CommandCall> {
-    input.split(';').filter_map(|chunk| parse_chunk(chunk.trim())).collect()
+    split_quoted_semicolons(input)
+        .iter()
+        .filter_map(|chunk| parse_chunk(chunk.trim()))
+        .collect()
 }
 
 /// Parses one semicolon-separated segment into a single command call, or `None` if empty.
@@ -206,6 +231,20 @@ mod tests {
         assert_eq!(calls[0].flags, vec!["-l"]);
         assert_eq!(calls[1].name, "echo");
         assert_eq!(calls[1].args, vec!["hi"]);
+    }
+
+    #[test]
+    fn test_parse_line_quoted_semicolon() {
+        // Semicolon inside double quotes is not a separator
+        let calls = parse_line("echo \"a;b\"; echo c");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].args, vec!["a;b"]);
+        assert_eq!(calls[1].args, vec!["c"]);
+        // Semicolon inside single quotes is not a separator
+        let calls = parse_line("echo 'x;y'; echo z");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].args, vec!["x;y"]);
+        assert_eq!(calls[1].args, vec!["z"]);
     }
 
     #[test]
